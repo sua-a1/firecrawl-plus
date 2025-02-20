@@ -2,15 +2,16 @@
   "name": "firecrawl-scraper-js",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/main.js",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
-    "start": "nodemon --exec ts-node src/index.ts",
-    "start:production": "tsc && node dist/src/index.js",
-    "format": "prettier --write \"src/**/*.(js|ts)\"",
-    "flyio": "node dist/src/index.js",
-    "start:dev": "nodemon --exec ts-node src/index.ts",
+    "start": "node dist/main.js",
+    "start:dev": "nodemon --exec ts-node src/main.ts",
     "build": "tsc",
-    "build:nosentry": "tsc",
+    "prebuild": "rm -rf dist",
+    "format": "prettier --write \"src/**/*.(js|ts)\"",
     "test": "npx jest --detectOpenHandles --forceExit --openHandlesTimeout=120000 --watchAll=false --testPathIgnorePatterns='src/__tests__/e2e_noAuth/*'",
     "test:local-no-auth": "npx jest --detectOpenHandles --forceExit --openHandlesTimeout=120000 --watchAll=false --testPathIgnorePatterns='src/__tests__/e2e_withAuth/*'",
     "test:full": "npx jest --detectOpenHandles --forceExit --openHandlesTimeout=120000 --watchAll=false --testPathIgnorePatterns='(src/__tests__/e2e_noAuth|src/__tests__/e2e_withAuth)'",
@@ -20,9 +21,6 @@
     "worker:production": "node dist/src/services/queue-worker.js",
     "index-worker": "nodemon --exec ts-node src/services/indexing/index-worker.ts",
     "index-worker:production": "node dist/src/services/indexing/index-worker.js",
-    "mongo-docker": "docker run -d -p 2717:27017 -v ./mongo-data:/data/db --name mongodb mongo:latest",
-    "mongo-docker-console": "docker exec -it mongodb mongosh",
-    "run-example": "npx ts-node src/example.ts",
     "deploy:fly": "flyctl deploy --build-secret SENTRY_AUTH_TOKEN=$(dotenv -p SENTRY_AUTH_TOKEN) --depot=false",
     "deploy:fly:staging": "fly deploy -c fly.staging.toml --depot=false",
     "sentry:sourcemaps": "sentry-cli sourcemaps inject --org caleb-peffer --project firecrawl-scraper-js ./dist && sentry-cli sourcemaps upload --org caleb-peffer --project firecrawl-scraper-js ./dist"
