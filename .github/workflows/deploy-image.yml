@@ -11,6 +11,11 @@ on:
       - apps/api/**
   workflow_dispatch:
 
+# Add permissions for GITHUB_TOKEN
+permissions:
+  contents: read
+  packages: write
+
 jobs:
       push-app-image:
         runs-on: ubuntu-latest
@@ -28,7 +33,7 @@ jobs:
               username: ${{github.actor}}
               password: ${{secrets.GITHUB_TOKEN}}
 
-          - name: 'Build Inventory Image'
+          - name: 'Build and Push API Image'
             run: |
-              docker build . --tag ghcr.io/mendableai/firecrawl:latest
-              docker push ghcr.io/mendableai/firecrawl:latest
+              docker build . --tag ghcr.io/${{github.repository_owner}}/firecrawl-plus:latest
+              docker push ghcr.io/${{github.repository_owner}}/firecrawl-plus:latest
