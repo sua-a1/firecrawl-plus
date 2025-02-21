@@ -40,3 +40,7 @@ apps/js-sdk/firecrawl/dist
 .vscode
 llm-links.txt
 mapped-links.txt
+
+# Model cache files
+apps/api/.cache/
+*.onnx
