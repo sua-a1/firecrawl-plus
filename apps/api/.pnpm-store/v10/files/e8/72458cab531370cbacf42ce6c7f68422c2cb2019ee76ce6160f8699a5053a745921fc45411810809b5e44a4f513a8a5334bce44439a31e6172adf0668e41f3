@@ -1,0 +1,24 @@
+/**
+ * Gets the number of maximum requests that can be made when splitting PDF.
+ * - The number of maximum requests is determined by the value of the request parameter
+ * `split_pdf_thread`.
+ * - If the parameter is not set or has an invalid value, the default number of
+ * parallel requests (5) is used.
+ * - If the number of maximum requests is greater than the maximum allowed (15), it is
+ * clipped to the maximum value.
+ * - If the number of maximum requests is less than 1, the default number of parallel
+ * requests (5) is used.
+ *
+ * @returns The number of maximum requests to use when calling the API to split a PDF.
+ */
+export declare function getSplitPdfConcurrencyLevel(formData: FormData): number;
+/**
+ * Retrieves the starting page number from the provided form data.
+ * If the starting page number is not a valid integer or less than 1,
+ * it will use the default value `1`.
+ *
+ * @param formData - Request form data.
+ * @returns The starting page number.
+ */
+export declare function getStartingPageNumber(formData: FormData): number;
+//# sourceMappingURL=form.d.ts.map

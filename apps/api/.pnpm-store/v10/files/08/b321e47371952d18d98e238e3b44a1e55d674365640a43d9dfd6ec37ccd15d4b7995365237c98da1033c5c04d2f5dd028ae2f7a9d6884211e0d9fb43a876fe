@@ -1,0 +1,2 @@
+import { TaggedSentence } from './TaggedSentence';
+export declare type Rule = (taggedSentence: TaggedSentence, index: number) => void;

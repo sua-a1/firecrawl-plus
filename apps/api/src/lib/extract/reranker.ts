@@ -9,9 +9,10 @@ import { generateOpenAICompletions } from "../../scraper/scrapeURL/transformers/
 import { buildRerankerUserPrompt } from "./build-prompts";
 import { buildRerankerSystemPrompt } from "./build-prompts";
 import { dumpToFile } from "./helpers/dump-to-file";
+import { CohereRateLimiter } from '../../services/link-management/cohere-rate-limiter';
 
 const cohere = new CohereClient({
-  token: process.env.COHERE_API_KEY,
+  token: process.env.COHERE_API_KEY || "",
 });
 
 interface RankingResult {
@@ -24,27 +25,51 @@ interface RankingResult {
   }[];
 }
 
-export async function rerankDocuments(
-  documents: (string | Record<string, string>)[],
-  query: string,
-  topN = 3,
-  model = "rerank-english-v3.0",
-) {
-  const rerank = await cohere.v2.rerank({
-    documents,
-    query,
-    topN,
-    model,
-    returnDocuments: true,
-  });
+export class Reranker {
+  private client: CohereClient;
+  private rateLimiter: CohereRateLimiter;
 
-  return rerank.results
-    .sort((a, b) => b.relevanceScore - a.relevanceScore)
-    .map((x) => ({
-      document: x.document,
-      index: x.index,
-      relevanceScore: x.relevanceScore,
-    }));
+  constructor(apiKey: string) {
+    this.client = new CohereClient({ token: apiKey });
+    this.rateLimiter = new CohereRateLimiter();
+  }
+
+  async rerankDocuments(
+    documents: string[],
+    query: string,
+    topN = 3,
+    model = 'rerank-english-v2.0',
+  ): Promise<{ document: string; relevanceScore: number }[]> {
+    if (!documents.length) {
+      return [];
+    }
+
+    try {
+      logger.debug(`Reranking ${documents.length} documents with query: ${query}`);
+      
+      const response = await this.rateLimiter.enqueue(() => 
+        this.client.rerank({
+          documents,
+          query,
+          topN,
+          model,
+        })
+      );
+
+      const results = response.results
+        .filter(result => result.document !== undefined)
+        .map(result => ({
+          document: String(result.document),
+          relevanceScore: result.relevanceScore,
+        }));
+
+      logger.debug(`Reranking completed. Found ${results.length} results`);
+      return results;
+    } catch (error) {
+      logger.error('Error reranking documents:', error);
+      throw error;
+    }
+  }
 }
 
 export async function rerankLinks(

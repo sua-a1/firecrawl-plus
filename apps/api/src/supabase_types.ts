@@ -937,6 +937,184 @@ export interface Database {
           },
         ];
       };
+      links: {
+        Row: {
+          id: number;
+          project_id: number;
+          page_url: string;
+          extracted_link: string;
+          status_code: number | null;
+          last_checked: string;
+          suggested_alternative: string | null;
+          manual_override: string | null;
+          anchor_text: string | null;
+          is_internal: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          project_id: number;
+          page_url: string;
+          extracted_link: string;
+          status_code?: number | null;
+          last_checked?: string;
+          suggested_alternative?: string | null;
+          manual_override?: string | null;
+          anchor_text?: string | null;
+          is_internal?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: number;
+          project_id?: number;
+          page_url?: string;
+          extracted_link?: string;
+          status_code?: number | null;
+          last_checked?: string;
+          suggested_alternative?: string | null;
+          manual_override?: string | null;
+          anchor_text?: string | null;
+          is_internal?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "links_project_id_fkey";
+            columns: ["project_id"];
+            referencedRelation: "mendable_project";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      link_redirects: {
+        Row: {
+          id: number;
+          link_id: number;
+          original_url: string;
+          redirected_url: string;
+          status_code: number | null;
+          redirect_type: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          link_id: number;
+          original_url: string;
+          redirected_url: string;
+          status_code?: number | null;
+          redirect_type?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          link_id?: number;
+          original_url?: string;
+          redirected_url?: string;
+          status_code?: number | null;
+          redirect_type?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "link_redirects_link_id_fkey";
+            columns: ["link_id"];
+            referencedRelation: "links";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      source_links: {
+        Row: {
+          id: number;
+          source_id: number;
+          link_id: number;
+          data_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          source_id: number;
+          link_id: number;
+          data_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          source_id?: number;
+          link_id?: number;
+          data_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "source_links_source_id_fkey";
+            columns: ["source_id"];
+            referencedRelation: "source";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "source_links_link_id_fkey";
+            columns: ["link_id"];
+            referencedRelation: "links";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "source_links_data_id_fkey";
+            columns: ["data_id"];
+            referencedRelation: "data_sources";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      page_summaries: {
+        Row: {
+          id: number;
+          project_id: number;
+          page_url: string;
+          original_text: string;
+          extractive_summary: string | null;
+          abstractive_summary: string | null;
+          summary_type: 'extractive' | 'abstractive' | 'both';
+          created_at: string;
+          updated_at: string;
+          metadata: Json;
+        };
+        Insert: {
+          id?: number;
+          project_id: number;
+          page_url: string;
+          original_text: string;
+          extractive_summary?: string | null;
+          abstractive_summary?: string | null;
+          summary_type?: 'extractive' | 'abstractive' | 'both';
+          created_at?: string;
+          updated_at?: string;
+          metadata?: Json;
+        };
+        Update: {
+          id?: number;
+          project_id?: number;
+          page_url?: string;
+          original_text?: string;
+          extractive_summary?: string | null;
+          abstractive_summary?: string | null;
+          summary_type?: 'extractive' | 'abstractive' | 'both';
+          created_at?: string;
+          updated_at?: string;
+          metadata?: Json;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "page_summaries_project_id_fkey";
+            columns: ["project_id"];
+            referencedRelation: "mendable_project";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
     };
     Views: {
       [_ in never]: never;

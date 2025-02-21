@@ -437,15 +437,57 @@ const crawlerOptions = z
   .object({
     includePaths: z.string().array().default([]),
     excludePaths: z.string().array().default([]),
-    maxDepth: z.number().default(10), // default?
-    limit: z.number().default(10000), // default?
-    allowBackwardLinks: z.boolean().default(false), // >> TODO: CHANGE THIS NAME???
+    maxDepth: z.number().default(10),
+    limit: z.number().default(10000),
+    allowBackwardLinks: z.boolean().default(false),
     allowExternalLinks: z.boolean().default(false),
     allowSubdomains: z.boolean().default(false),
     ignoreRobotsTxt: z.boolean().default(false),
     ignoreSitemap: z.boolean().default(false),
     deduplicateSimilarURLs: z.boolean().default(true),
     ignoreQueryParameters: z.boolean().default(false),
+    // Add summarization options
+    summarization: z.object({
+      enabled: z.boolean().default(false),
+      type: z.enum(['extractive', 'abstractive', 'both']).default('extractive'),
+      maxLength: z.number().optional(),
+      minLength: z.number().optional(),
+      extractiveSummarizer: z.enum(['transformers', 'textrank', 'lexrank']).optional(),
+      fallbackStrategy: z.enum(['textrank', 'lexrank']).optional(),
+      temperature: z.number().optional(),
+      modelName: z.string().optional(),
+      // Transformer-specific options
+      earlyStop: z.boolean().optional(),
+      noRepeatNgramSize: z.number().optional(),
+      numBeams: z.number().optional(),
+      useFallbackModel: z.boolean().optional()
+    }).optional().default({
+      enabled: false,
+      type: 'extractive'
+    }),
+    // Add link validation options from feature 1
+    validateLinks: z.boolean().default(false),
+    linkValidation: z.object({
+      maxRetries: z.number().optional(),
+      batchSize: z.number().optional(),
+      rateLimit: z.object({
+        maxRequestsPerMinute: z.number().optional(),
+        delayBetweenBatches: z.number().optional(),
+        requestsPerBatch: z.number().optional()
+      }).optional(),
+      alternativeUrlOptions: z.object({
+        maxResults: z.number().optional(),
+        minSimilarityScore: z.number().optional(),
+        useWaybackMachine: z.boolean().optional(),
+        useSimilarityMatching: z.boolean().optional(),
+        useAIMatching: z.boolean().optional(),
+        contextWeights: z.object({
+          url: z.number().optional(),
+          title: z.number().optional(),
+          description: z.number().optional()
+        }).optional()
+      }).optional()
+    }).optional().default({})
   })
   .strict(strictMessage);
 
@@ -789,6 +831,11 @@ export function toLegacyCrawlerOptions(x: CrawlerOptions) {
     ignoreSitemap: x.ignoreSitemap,
     deduplicateSimilarURLs: x.deduplicateSimilarURLs,
     ignoreQueryParameters: x.ignoreQueryParameters,
+    // Add summarization options
+    summarization: x.summarization,
+    // Add link validation options
+    validateLinks: x.validateLinks,
+    linkValidation: x.linkValidation
   };
 }
 
@@ -809,6 +856,11 @@ export function fromLegacyCrawlerOptions(x: any): {
       ignoreSitemap: x.ignoreSitemap,
       deduplicateSimilarURLs: x.deduplicateSimilarURLs,
       ignoreQueryParameters: x.ignoreQueryParameters,
+      // Add summarization options
+      summarization: x.summarization ?? { enabled: false, type: 'extractive' },
+      // Add link validation options
+      validateLinks: x.validateLinks ?? false,
+      linkValidation: x.linkValidation ?? {}
     }),
     internalOptions: {
       v0CrawlOnlyUrls: x.returnOnlyUrls,

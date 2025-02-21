@@ -1,0 +1,27 @@
+import * as shared from "../shared";
+import * as z from "zod";
+export type Detail = Array<shared.ValidationError> | string;
+export type HTTPValidationErrorData = {
+    detail?: Array<shared.ValidationError> | string | undefined;
+};
+export declare class HTTPValidationError extends Error {
+    detail?: Array<shared.ValidationError> | string | undefined;
+    /** The original data that was passed to this error instance. */
+    data$: HTTPValidationErrorData;
+    constructor(err: HTTPValidationErrorData);
+}
+/** @internal */
+export declare namespace Detail$ {
+    const inboundSchema: z.ZodType<Detail, z.ZodTypeDef, unknown>;
+    type Outbound = Array<shared.ValidationError$.Outbound> | string;
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, Detail>;
+}
+/** @internal */
+export declare namespace HTTPValidationError$ {
+    const inboundSchema: z.ZodType<HTTPValidationError, z.ZodTypeDef, unknown>;
+    type Outbound = {
+        detail?: Array<shared.ValidationError$.Outbound> | string | undefined;
+    };
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, HTTPValidationError>;
+}
+//# sourceMappingURL=httpvalidationerror.d.ts.map

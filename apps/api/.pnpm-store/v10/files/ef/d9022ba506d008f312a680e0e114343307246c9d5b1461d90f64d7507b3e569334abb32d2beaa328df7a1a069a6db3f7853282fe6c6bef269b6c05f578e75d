@@ -1,0 +1,195 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SplitPdfHook = void 0;
+const async_1 = __importDefault(require("async"));
+const index_1 = require("./utils/index");
+const common_1 = require("./common");
+/**
+ * Represents a hook for splitting and sending PDF files as per page requests.
+ */
+class SplitPdfHook {
+    constructor() {
+        /**
+         * Maps lists responses to client operation.
+         */
+        this.partitionResponses = {};
+        /**
+         * Maps parallel requests to client operation.
+         */
+        this.partitionRequests = {};
+    }
+    /**
+     * Initializes Split PDF Hook.
+     * @param opts - The options for SDK initialization.
+     * @returns The initialized SDK options.
+     */
+    sdkInit(opts) {
+        const { baseURL, client } = opts;
+        this.client = client;
+        return { baseURL: baseURL, client: client };
+    }
+    /**
+     * If `splitPdfPage` is set to `true` in the request, the PDF file is split into
+     * separate batches. Each batch is sent as a separate request in parallel. The last
+     * batch request is returned by this method. It will return the original request
+     * when: `splitPdfPage` is set to `false`, the file is not a PDF, or the HTTP
+     * has not been initialized.
+     *
+     * @param hookCtx - The hook context containing information about the operation.
+     * @param request - The request object.
+     * @returns If `splitPdfPage` is set to `true`, the last batch request; otherwise,
+     * the original request.
+     */
+    async beforeRequest(hookCtx, request) {
+        var _a;
+        const { operationID } = hookCtx;
+        const requestClone = request.clone();
+        const formData = await requestClone.formData();
+        const splitPdfPage = (0, index_1.stringToBoolean)((_a = formData.get(common_1.PARTITION_FORM_SPLIT_PDF_PAGE_KEY)) !== null && _a !== void 0 ? _a : "false");
+        const file = formData.get(common_1.PARTITION_FORM_FILES_KEY);
+        if (!splitPdfPage) {
+            console.info("Partitioning without split.");
+            return request;
+        }
+        console.info("Preparing to split document for partition.");
+        if (!this.client) {
+            console.warn("HTTP client not accessible! Partitioning without split.");
+            return request;
+        }
+        const [error, pdf, pagesCount] = await (0, index_1.loadPdf)(file);
+        if (file === null || pdf === null || error) {
+            console.info("Partitioning without split.");
+            return request;
+        }
+        if (pagesCount < common_1.MIN_PAGES_PER_THREAD) {
+            console.info(`PDF has less than ${common_1.MIN_PAGES_PER_THREAD} pages. Partitioning without split.`);
+            return request;
+        }
+        const startingPageNumber = (0, index_1.getStartingPageNumber)(formData);
+        console.info("Starting page number set to %d", startingPageNumber);
+        const concurrencyLevel = (0, index_1.getSplitPdfConcurrencyLevel)(formData);
+        console.info("Concurrency level set to %d", concurrencyLevel);
+        const splitSize = await (0, index_1.getOptimalSplitSize)(pagesCount, concurrencyLevel);
+        console.info("Determined optimal split size of %d pages.", splitSize);
+        if (splitSize >= pagesCount) {
+            console.info("Document has too few pages (%d) to be split efficiently. Partitioning without split.", pagesCount);
+            return request;
+        }
+        const splits = await (0, index_1.splitPdf)(pdf, splitSize);
+        const numberOfSplits = splits.length;
+        console.info("Document split into %d, %d-paged sets.", numberOfSplits, splitSize);
+        console.info("Partitioning %d, %d-paged sets.", numberOfSplits, splitSize);
+        const headers = (0, index_1.prepareRequestHeaders)(request);
+        const requests = [];
+        let setIndex = 1;
+        for (const { content, startPage } of splits) {
+            // Both startPage and startingPageNumber are 1-based, so we need to subtract 1
+            const firstPageNumber = startPage + startingPageNumber - 1;
+            console.info("Partitioning set #%d (pages %d-%d).", setIndex, firstPageNumber, Math.min(firstPageNumber + splitSize - 1, pagesCount));
+            const body = await (0, index_1.prepareRequestBody)(formData, content, file.name, firstPageNumber);
+            const req = new Request(requestClone, {
+                headers,
+                body,
+            });
+            requests.push(req);
+            setIndex += 1;
+        }
+        this.partitionResponses[operationID] = new Array(requests.length);
+        this.partitionRequests[operationID] = async_1.default.parallelLimit(requests.slice(0, -1).map((req, pageIndex) => async () => {
+            const pageNumber = pageIndex + startingPageNumber;
+            try {
+                const response = await this.client.request(req);
+                if (response.status === 200) {
+                    this.partitionResponses[operationID][pageIndex] =
+                        response.clone();
+                }
+            }
+            catch (e) {
+                console.error(`Failed to send request for page ${pageNumber}.`);
+            }
+        }), concurrencyLevel);
+        return requests.at(-1);
+    }
+    /**
+     * Executes after a successful API request. Awaits all parallel requests and combines
+     * the responses into a single response object.
+     * @param hookCtx - The context object containing information about the hook execution.
+     * @param response - The response object returned from the API request.
+     * @returns If requests were run in parallel, a combined response object; otherwise,
+     * the original response.
+     */
+    async afterSuccess(hookCtx, response) {
+        const { operationID } = hookCtx;
+        const responses = await this.awaitAllRequests(operationID);
+        if (!responses) {
+            return response;
+        }
+        const headers = (0, index_1.prepareResponseHeaders)(response);
+        const body = await (0, index_1.prepareResponseBody)([...responses, response]);
+        this.clearOperation(operationID);
+        return new Response(body, {
+            headers: headers,
+            status: response.status,
+            statusText: response.statusText,
+        });
+    }
+    /**
+     * Executes after an unsuccessful API request. Awaits all parallel requests, if at least one
+     * request was successful, combines the responses into a single response object and doesn't
+     * throw an error. It will return an error only if all requests failed, or there was no PDF split.
+     * @param hookCtx - The AfterErrorContext object containing information about the hook context.
+     * @param response - The Response object representing the response received before the error occurred.
+     * @param error - The error object that was thrown.
+     * @returns If requests were run in parallel, and at least one was successful, a combined response
+     * object; otherwise, the original response and error.
+     */
+    async afterError(hookCtx, response, error) {
+        const { operationID } = hookCtx;
+        const responses = await this.awaitAllRequests(operationID);
+        if (!(responses === null || responses === void 0 ? void 0 : responses.length)) {
+            this.clearOperation(operationID);
+            return { response, error };
+        }
+        const okResponse = responses[0];
+        const headers = (0, index_1.prepareResponseHeaders)(okResponse);
+        const body = await (0, index_1.prepareResponseBody)(responses);
+        const finalResponse = new Response(body, {
+            headers: headers,
+            status: okResponse.status,
+            statusText: okResponse.statusText,
+        });
+        this.clearOperation(operationID);
+        return { response: finalResponse, error: null };
+    }
+    /**
+     * Clears the parallel requests and response data associated with the given
+     * operation ID.
+     *
+     * @param operationID - The ID of the operation to clear.
+     */
+    clearOperation(operationID) {
+        delete this.partitionResponses[operationID];
+        delete this.partitionRequests[operationID];
+    }
+    /**
+     * Awaits all parallel requests for a given operation ID and returns the
+     * responses.
+     * @param operationID - The ID of the operation.
+     * @returns A promise that resolves to an array of responses, or undefined
+     * if there are no requests for the given operation ID.
+     */
+    async awaitAllRequests(operationID) {
+        var _a, _b;
+        const requests = this.partitionRequests[operationID];
+        if (!requests) {
+            return;
+        }
+        await requests;
+        return (_b = (_a = this.partitionResponses[operationID]) === null || _a === void 0 ? void 0 : _a.filter((e) => e)) !== null && _b !== void 0 ? _b : [];
+    }
+}
+exports.SplitPdfHook = SplitPdfHook;
+//# sourceMappingURL=SplitPdfHook.js.map

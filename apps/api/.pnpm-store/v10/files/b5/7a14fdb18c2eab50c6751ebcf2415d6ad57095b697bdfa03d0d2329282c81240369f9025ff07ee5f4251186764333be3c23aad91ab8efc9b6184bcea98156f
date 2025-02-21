@@ -1,0 +1,66 @@
+"use strict";
+/*!
+ * jsPOS
+ *
+ * Copyright 2010, Percy Wegmann
+ * Licensed under the LGPLv3 license
+ * http://www.opensource.org/licenses/lgpl-3.0.html
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Tagger = void 0;
+var BrillTransformationRules_1 = __importDefault(require("./BrillTransformationRules"));
+var enums_1 = require("./enums");
+var Lexicon_json_1 = __importDefault(require("./Lexicon.json"));
+var Lexicon = Lexicon_json_1.default;
+var transformationRules = new BrillTransformationRules_1.default();
+var Tagger = (function () {
+    function Tagger() {
+    }
+    Tagger.prototype.wordInLexicon = function (word) {
+        return Boolean(Lexicon[word] ||
+            Lexicon[word.toLowerCase()]);
+    };
+    Tagger.prototype.tag = function (words) {
+        var taggedSentence = new Array(words.length);
+        for (var i = 0, size = words.length; i < size; i++) {
+            taggedSentence[i] = new Array(2);
+            taggedSentence[i][0] = words[i];
+            var ss = Lexicon[words[i]] || Lexicon[words[i].toLowerCase()];
+            if (!ss && words[i].length === 1) {
+                taggedSentence[i][1] = "".concat(words[i], "^");
+            }
+            if (!ss || !Array.isArray(ss)) {
+                taggedSentence[i][1] = enums_1.TagType.NN;
+            }
+            else {
+                taggedSentence[i][1] = ss[0];
+            }
+        }
+        var _loop_1 = function (i) {
+            transformationRules.getRules().forEach(function (rule) {
+                rule(taggedSentence, i);
+            });
+        };
+        for (var i = 0; i < taggedSentence.length; i++) {
+            _loop_1(i);
+        }
+        return taggedSentence;
+    };
+    Tagger.prototype.prettyPrint = function (taggedWords) {
+        for (var i in taggedWords) {
+            console.log(taggedWords[i][0] + '(' + taggedWords[i][1] + ')');
+        }
+    };
+    Tagger.prototype.extendLexicon = function (lexicon) {
+        for (var word in lexicon) {
+            if (!Lexicon[word]) {
+                Lexicon[word] = lexicon[word];
+            }
+        }
+    };
+    return Tagger;
+}());
+exports.Tagger = Tagger;

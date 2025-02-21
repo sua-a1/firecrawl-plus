@@ -1,0 +1,5 @@
+/**
+ * Convert optional timestamp to unix timestamp
+ * @param timestamp
+ */
+export declare function toUnixTimestamp(timestamp?: number | Date): number | undefined;

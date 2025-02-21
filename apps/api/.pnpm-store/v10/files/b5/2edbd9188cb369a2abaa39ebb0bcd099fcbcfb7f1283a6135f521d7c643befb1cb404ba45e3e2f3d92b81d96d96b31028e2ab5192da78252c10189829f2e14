@@ -1,0 +1,24 @@
+import * as z from "zod";
+export type Loc = string | number;
+export type ValidationError = {
+    loc: Array<string | number>;
+    msg: string;
+    type: string;
+};
+/** @internal */
+export declare namespace Loc$ {
+    const inboundSchema: z.ZodType<Loc, z.ZodTypeDef, unknown>;
+    type Outbound = string | number;
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, Loc>;
+}
+/** @internal */
+export declare namespace ValidationError$ {
+    const inboundSchema: z.ZodType<ValidationError, z.ZodTypeDef, unknown>;
+    type Outbound = {
+        loc: Array<string | number>;
+        msg: string;
+        type: string;
+    };
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, ValidationError>;
+}
+//# sourceMappingURL=validationerror.d.ts.map

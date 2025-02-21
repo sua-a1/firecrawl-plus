@@ -39,6 +39,7 @@ export async function robustFetch<
   tryCooldown,
   mock,
   abort,
+  dontParseResponse = false,
 }: RobustFetchParams<Schema>): Promise<Output> {
   abort?.throwIfAborted();
   
@@ -54,6 +55,7 @@ export async function robustFetch<
     tryCount,
     tryCooldown,
     abort,
+    dontParseResponse,
   };
 
   let response: {
@@ -213,24 +215,28 @@ export async function robustFetch<
   }
 
   let data: Output;
-  try {
-    data = JSON.parse(response.body);
-  } catch (error) {
-    logger.debug("Request sent malformed JSON", {
-      params,
-      response,
-      requestId,
-    });
-    throw new Error("Request sent malformed JSON", {
-      cause: {
+  if (dontParseResponse) {
+    data = response.body as Output;
+  } else {
+    try {
+      data = JSON.parse(response.body);
+    } catch (error) {
+      logger.debug("Request sent malformed JSON", {
         params,
         response,
         requestId,
-      },
-    });
+      });
+      throw new Error("Request sent malformed JSON", {
+        cause: {
+          params,
+          response,
+          requestId,
+        },
+      });
+    }
   }
 
-  if (schema) {
+  if (schema && !dontParseResponse) {
     try {
       data = schema.parse(data);
     } catch (error) {

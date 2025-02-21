@@ -1,0 +1,531 @@
+import { OpenAIApi, CreateEmbeddingRequest, Configuration } from 'openai';
+import GPT3Tokenizer from 'gpt3-tokenizer';
+
+interface Parser<T extends any> {
+    parse(text: string): T;
+}
+declare class NoopParser implements Parser<string> {
+    parse(text: string): string;
+}
+declare class JSONParser implements Parser<any> {
+    /**
+     * Parses JSON text into an object
+     *
+     * @example
+     * const parser = new JSONParser();
+     * parser.parse('{"a": 1, "b": 2, "c": 3}'); // outputs {a: 1, b: 2, c: 3}
+     *
+     * @param text a string of JSON text
+     * @returns an object
+     */
+    parse(text: string): any;
+}
+/**
+ * Parser that parses CSV text into an array of objects
+ */
+declare class CSVParser implements Parser<any> {
+    /**
+     * Parses CSV text into an array of objects
+     *
+     * @example
+     * const parser = new CSVParser();
+     * parser.parse("a,b,c\n1,2,3"); // outputs [{a: 1, b: 2, c: 3}]
+     *
+     * @param text a string of CSV text
+     * @returns an array of objects
+     */
+    parse(text: string): any;
+}
+declare class ListParser implements Parser<Array<any>> {
+    /**
+     * Parses a list of items separated by a character
+     *
+     * @example
+     * const parser = new ListParser();
+     * parser.parse("a, b, c"); // outputs ["a", "b", "c"]
+     *
+     * @param text a string of items separated by a character
+     * @param char a character to split the text by
+     * @returns an array of items
+     */
+    parse(text: string, char?: string): string[];
+}
+
+declare class Prompt<T extends string = string, P extends Parser<any> = NoopParser> implements Parser<any> {
+    text: string;
+    variableNames: T[];
+    private parser;
+    constructor(text: string, variableNames: T[], parser?: P);
+    parse(completion: string): any;
+    format(variables: Record<T, string>): string;
+    toJson(): {
+        text: string;
+        variableNames: T[];
+    };
+}
+
+declare enum ModelProviderType {
+    OpenAI = 0
+}
+declare abstract class ModelProvider {
+    type: ModelProviderType;
+    constructor(type: ModelProviderType);
+}
+interface CompletionsModelProvider extends ModelProvider {
+    generate<T extends string>(promptText: string, ...args: any[]): Promise<string>;
+}
+interface EmbeddingsModelProvider extends ModelProvider {
+    embed(texts: string[], ...args: any[]): Promise<number[][]>;
+    embed(text: string, ...args: any[]): Promise<number[]>;
+}
+interface Tokenizer {
+    encode(text: string): {
+        tokens: number[];
+        texts: string[];
+    };
+    decode(tokens: number[]): string;
+    truncate(text: string, maxTokens: number): string;
+    countTokens(text: string): number;
+    countDocumentTokens(doc: Document): number;
+}
+
+declare class LLMChain<T extends string = string, P extends Parser<any> = NoopParser> {
+    prompt: Prompt<T, P>;
+    provider: CompletionsModelProvider;
+    constructor(prompt: Prompt<T, P>, provider: CompletionsModelProvider);
+    protected _run(variables: Record<T, string>): Promise<any>;
+    run(variables: Record<T, string>): Promise<any>;
+}
+
+declare class BufferedChatMemory implements Memory {
+    protected botName: string;
+    protected userName: string;
+    protected startingSpeaker: "user" | "bot";
+    protected maxInteractionTurns: number;
+    botMessages: string[];
+    userMessages: string[];
+    clear(): void;
+    constructor(botName?: string, userName?: string, startingSpeaker?: "user" | "bot", maxInteractionTurns?: number);
+    /**
+     * get the interaction history
+     *
+     * @example
+     *
+     * const memory = new BufferedChatMemory();
+     *
+     * memory.addBotMessage("Hello");
+     * memory.addUserMessage("Hi");
+     * memory.addBotMessage("How are you?");
+     * memory.addUserMessage("I'm fine, thanks");
+     *
+     * memory.get();
+     * // Assistant: Hello
+     * // User: Hi
+     * // Assistant: How are you?
+     * // User: I'm fine, thanks
+     *
+     *
+     *
+     * @returns a string containing the interaction history
+     */
+    get(): string;
+    addBotMessage(botMessage: string): void;
+    addUserMessage(userMessage: string): void;
+}
+
+interface Memory {
+    get: () => string;
+    clear: () => void;
+}
+
+declare class MemoryLLMChain<T extends "memory" | "userInput", P extends Parser<any> = NoopParser> extends LLMChain<T, P> {
+    prompt: Prompt<T, P>;
+    provider: CompletionsModelProvider;
+    memory: Memory;
+    constructor(prompt: Prompt<T, P>, provider: CompletionsModelProvider, memory: Memory);
+    protected _run(variables: Record<T, string>): Promise<any>;
+    run(variables: Omit<Record<T, string>, "memory">): Promise<any>;
+}
+
+interface EmbeddingsOptions {
+    cacheDir?: string;
+}
+interface QueryResult {
+    query: string | number[];
+    document: Document;
+    similarity: number;
+}
+declare class Embeddings {
+    key: string;
+    cacheDir: string;
+    provider: EmbeddingsModelProvider;
+    documents: Document[];
+    embeddings: number[][];
+    constructor(key: string, provider: EmbeddingsModelProvider, documents: Document[], options?: EmbeddingsOptions);
+    isCached(): boolean;
+    clearCache(): void;
+    load(): void;
+    index(embeddings?: number[][]): Promise<void>;
+    isInitialized(): boolean;
+    query(query: number[], k: number): Promise<QueryResult[]>;
+    query(query: string, k: number): Promise<QueryResult[]>;
+    update(data: string[]): void;
+    delete(data: string[]): void;
+    save(): void;
+}
+
+/**
+ *
+Given the following document, answer the question if you can.
+If you don\'t have enough information, don't return anything.
+
+Document:
+{{document}}
+
+Question:
+{{question}}
+
+Answer:`
+ */
+declare const QA: () => Prompt<"document" | "question", NoopParser>;
+/**
+ *Use the following portion of a long document to see if any of the text is relevant to answer the question.
+
+Return any relevant text verbatim.
+
+{{document}}
+
+Question: {{question}}
+
+Relevant text, if any:
+ */
+declare const extractText: () => Prompt<"document" | "question", NoopParser>;
+/**
+ * Write a concise summary of the document below:
+
+{{document}}
+
+Summary:
+ */
+declare const summarize: () => Prompt<"document", NoopParser>;
+/**
+You are Assistant. Help the user as much as possible.
+
+{{memory}}
+User: {{userInput}}
+Assistant:
+*/
+declare const chatbot: () => Prompt<"memory" | "userInput", NoopParser>;
+/**
+  Given this typescript type return a valid, stringified JSON Object representing an instance of the type.
+  Make sure the response is JUST the object. Not a variable or anything else.
+  Examples:
+
+  Correct:
+  {
+    "name": "John",
+  }
+
+  Wrong:
+  const data = {
+    "name": "John",
+  }
+
+  Note:
+  - undefined and null is not a valid json fields, instead, just leave out the field
+  - use a random stringified iso date format for dates
+  - optional, undefined or nullable fields in the response mean that you can skip them OR you can add them. Choose randomly.
+   
+  
+  Okay, here's the type:
+  {{type}}
+
+  const VALID_STRINGIFIED_JSON=
+ */
+declare const extractJSON: () => Prompt<"data" | "type", JSONParser>;
+/**
+Given this data and a list of headers, return a CSV file containing the column data.
+    Example:
+  
+    Data: Hey my name is Colin and I'm a 29 year old software engineer.
+    Headers: Name,
+    CSV:
+    Name,Age,Occupation
+    Colin,29,Software Engineer
+  
+    Notes:
+    - undefined and null are not valid csv fields, instead, just leave out the field.
+    - convert date information to stringified iso date format for dates.
+    - optional, undefined or nullable fields in the response mean that you can skip them OR you can add them depending on the data.
+    - the first row of the csv should be the headers
+  
+    ---
+     
+    Okay, here is the Data and the Headers:
+    Data:
+    {{data}}
+  
+    Headers:
+    {{headers}}
+  
+    CSV:
+ */
+declare const extractCSV: () => Prompt<"data" | "headers", CSVParser>;
+
+declare const prompts_QA: typeof QA;
+declare const prompts_chatbot: typeof chatbot;
+declare const prompts_extractCSV: typeof extractCSV;
+declare const prompts_extractJSON: typeof extractJSON;
+declare const prompts_extractText: typeof extractText;
+declare const prompts_summarize: typeof summarize;
+declare namespace prompts {
+  export {
+    prompts_QA as QA,
+    prompts_chatbot as chatbot,
+    prompts_extractCSV as extractCSV,
+    prompts_extractJSON as extractJSON,
+    prompts_extractText as extractText,
+    prompts_summarize as summarize,
+  };
+}
+
+declare class OpenAIConfiguration extends Configuration {
+}
+type GenerateCompletionOptions = {
+    /**
+     * ID of the model to use. You can use the [List models](/docs/api-reference/models/list) API to see all of your available models, or see our [Model overview](/docs/models/overview) for descriptions of them.
+     * @type {string}
+     * @memberof CreateCompletionRequest
+     */
+    model?: OPENAI_MODEL;
+    /**
+     * The suffix that comes after a completion of inserted text.
+     * @type {string}
+     * @memberof CreateCompletionRequest
+     */
+    suffix?: string | null;
+    /**
+     * The maximum number of [tokens](/tokenizer) to generate in the completion.  The token count of your prompt plus `max_tokens` cannot exceed the model\'s context length. Most models have a context length of 2048 tokens (except for the newest models, which support 4096).
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    max_tokens?: number | null;
+    /**
+     * What [sampling temperature](https://towardsdatascience.com/how-to-sample-from-language-models-682bceb97277) to use. Higher values means the model will take more risks. Try 0.9 for more creative applications, and 0 (argmax sampling) for ones with a well-defined answer.  We generally recommend altering this or `top_p` but not both.
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    temperature?: number | null;
+    /**
+     * An alternative to sampling with temperature, called nucleus sampling, where the model considers the results of the tokens with top_p probability mass. So 0.1 means only the tokens comprising the top 10% probability mass are considered.  We generally recommend altering this or `temperature` but not both.
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    top_p?: number | null;
+    /**
+     * How many completions to generate for each prompt.  **Note:** Because this parameter generates many completions, it can quickly consume your token quota. Use carefully and ensure that you have reasonable settings for `max_tokens` and `stop`.
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    n?: number | null;
+    /**
+     * Whether to stream back partial progress. If set, tokens will be sent as data-only [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#Event_stream_format) as they become available, with the stream terminated by a `data: [DONE]` message.
+     * @type {boolean}
+     * @memberof CreateCompletionRequest
+     */
+    stream?: boolean | null;
+    /**
+     * Include the log probabilities on the `logprobs` most likely tokens, as well the chosen tokens. For example, if `logprobs` is 5, the API will return a list of the 5 most likely tokens. The API will always return the `logprob` of the sampled token, so there may be up to `logprobs+1` elements in the response.  The maximum value for `logprobs` is 5. If you need more than this, please contact us through our [Help center](https://help.openai.com) and describe your use case.
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    logprobs?: number | null;
+    /**
+     * Echo back the prompt in addition to the completion
+     * @type {boolean}
+     * @memberof CreateCompletionRequest
+     */
+    echo?: boolean | null;
+    /**
+     *
+     * @type {CreateCompletionRequestStop}
+     * @memberof CreateCompletionRequest
+     */
+    stop?: string | string[] | null;
+    /**
+     * Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far, increasing the model\'s likelihood to talk about new topics.  [See more information about frequency and presence penalties.](/docs/api-reference/parameter-details)
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    presence_penalty?: number | null;
+    /**
+     * Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far, decreasing the model\'s likelihood to repeat the same line verbatim.  [See more information about frequency and presence penalties.](/docs/api-reference/parameter-details)
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    frequency_penalty?: number | null;
+    /**
+     * Generates `best_of` completions server-side and returns the \"best\" (the one with the highest log probability per token). Results cannot be streamed.  When used with `n`, `best_of` controls the number of candidate completions and `n` specifies how many to return – `best_of` must be greater than `n`.  **Note:** Because this parameter generates many completions, it can quickly consume your token quota. Use carefully and ensure that you have reasonable settings for `max_tokens` and `stop`.
+     * @type {number}
+     * @memberof CreateCompletionRequest
+     */
+    best_of?: number | null;
+    /**
+     * Modify the likelihood of specified tokens appearing in the completion.  Accepts a json object that maps tokens (specified by their token ID in the GPT tokenizer) to an associated bias value from -100 to 100. You can use this [tokenizer tool](/tokenizer?view=bpe) (which works for both GPT-2 and GPT-3) to convert text to token IDs. Mathematically, the bias is added to the logits generated by the model prior to sampling. The exact effect will vary per model, but values between -1 and 1 should decrease or increase likelihood of selection; values like -100 or 100 should result in a ban or exclusive selection of the relevant token.  As an example, you can pass `{\"50256\": -100}` to prevent the <|endoftext|> token from being generated.
+     * @type {object}
+     * @memberof CreateCompletionRequest
+     */
+    logit_bias?: object | null;
+    /**
+     * A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse. [Learn more](/docs/usage-policies/end-user-ids).
+     * @type {string}
+     * @memberof CreateCompletionRequest
+     */
+    user?: string;
+};
+declare class OpenAI extends ModelProvider implements CompletionsModelProvider, EmbeddingsModelProvider {
+    apiKey: string;
+    config: OpenAIConfiguration;
+    api: OpenAIApi;
+    completionsConfig: {
+        model: OPENAI_MODEL;
+        max_tokens: number;
+        temperature: number;
+        stop: null;
+    };
+    embeddingsConfig: OpenAIEmbeddingsConfig;
+    tokenizer: OpenAITokenizer;
+    constructor(apiKey: string);
+    countTokens(text: string): number;
+    generate(promptText: string, options?: GenerateCompletionOptions): Promise<string>;
+    /**
+     * NOTE: DISABLED until we can figure out how to stream the response.
+     *
+     * Use this on your server to stream completions from the OpenAI API.
+     *
+     * @param promptText
+     * @param options
+     * @returns
+     */
+    stream(promptText: string, options?: Omit<GenerateCompletionOptions, "stream">): Promise<void>;
+    embed(text: string, options?: Omit<CreateEmbeddingRequest, "input">): Promise<number[]>;
+    embed(texts: string[], options?: Omit<CreateEmbeddingRequest, "input">): Promise<number[][]>;
+    private embedOne;
+    private embedMany;
+}
+type OPENAI_MODEL = "text-davinci-003" | "text-davinci-002" | "code-davinci-002" | "text-curie-002";
+interface OpenAIEmbeddingsConfig {
+    model: string;
+}
+declare class OpenAITokenizer implements Tokenizer {
+    private tokenizer;
+    constructor(type?: "gpt3" | "codex");
+    encode(text: string): {
+        tokens: number[];
+        texts: string[];
+    };
+    decode(tokens: number[]): string;
+    truncate(text: string, maxTokens: number): string;
+    countTokens(text: string): number;
+    countDocumentTokens(doc: Document): number;
+}
+
+interface Loader {
+    load(): Promise<Document[]>;
+}
+declare class FileLoader implements Loader {
+    path: string;
+    meta?: Record<string, any>;
+    constructor(path: string, meta?: Record<string, any>);
+    /**
+     * Load a file from the filesystem
+     *
+     * @returns {Promise<Document[]>} A promise that resolves to an array of documents
+     */
+    load(): Promise<Document[]>;
+}
+
+interface TextSplitterOptions {
+    lengthFn?: (text: string) => number;
+    chunk?: boolean;
+    chunkSize?: number;
+    overlap?: number;
+}
+declare abstract class TextSplitter {
+    chunk: boolean;
+    chunkSize: number;
+    overlap: number;
+    protected tokenizer: GPT3Tokenizer;
+    constructor(opts?: TextSplitterOptions);
+    abstract splitText(text: string, opts?: TextSplitterOptions): string[];
+    mergeText(texts: string[], separator?: string): string;
+    mergeDocuments(docs: Document[]): string;
+    splitDocuments(docs: Document[], opts?: TextSplitterOptions): Document[];
+    createDocuments(texts: string[], metas?: Record<string, any>[], opts?: TextSplitterOptions): {
+        content: string;
+        meta: Record<string, any>;
+    }[];
+    protected createChunks(texts: string[], separator: string): string[];
+    getLength: (text: string) => number;
+    private lengthFn;
+}
+declare class CharacterTextSplitter extends TextSplitter {
+    character: string;
+    constructor(character?: string, opts?: TextSplitterOptions);
+    splitText: (text: string, opts?: TextSplitterOptions) => string[];
+}
+declare class SentenceTextSplitter extends TextSplitter {
+    splitText(text: string, opts?: TextSplitterOptions): string[];
+}
+declare class TokenSplitter extends TextSplitter {
+    chunk: boolean;
+    splitText(text: string, opts?: Omit<TextSplitterOptions, "chunk">): string[];
+}
+
+declare function injectVariables(template: string, variables: {
+    [key: string]: any;
+}): string;
+
+interface TraceConfig {
+    serverUrl: string;
+    send: (trace: Trace) => Promise<void> | void;
+}
+/**
+ * Set the trace config for your application
+ *
+ * This is useful for setting the server URL or the send function.
+ *
+ * @param newConfig
+ */
+declare const setTraceConfig: (newConfig: Partial<TraceConfig>) => void;
+declare function sendTraceToServer(trace: Trace): Promise<void>;
+type Trace = {
+    name: string;
+    inputs: any[];
+    outputs: any | null;
+    tags: string[];
+    id: string;
+    parentId: string | undefined;
+    children: Trace[];
+    error?: any;
+    timestamp: number;
+};
+declare const trace: <T extends any[], R extends unknown>(name: string, fn: (this: any, ...args: T) => R | Promise<R>, tags?: string[]) => (...args: T) => Promise<R>;
+declare function graphTraces(traces: Trace[], indent?: number): void;
+
+interface Document {
+    content: string;
+    meta: Record<string, any>;
+}
+
+declare const utils: {
+    unescapeStopTokens: (stop_tokens: string | string[]) => any;
+    injectVariables: typeof injectVariables;
+    parseJsonSSE: <T>({ data, onParse, onFinish, }: {
+        data: ReadableStream<any>;
+        onParse: (object: T) => void;
+        onFinish: () => void;
+    }) => Promise<void>;
+};
+
+export { BufferedChatMemory, CSVParser, CharacterTextSplitter, Document, Embeddings, FileLoader, JSONParser, LLMChain, ListParser, Loader, MemoryLLMChain, ModelProvider, OpenAI, Parser, Prompt, SentenceTextSplitter, TextSplitter, TokenSplitter, Trace, graphTraces, prompts, sendTraceToServer, setTraceConfig, trace, utils };

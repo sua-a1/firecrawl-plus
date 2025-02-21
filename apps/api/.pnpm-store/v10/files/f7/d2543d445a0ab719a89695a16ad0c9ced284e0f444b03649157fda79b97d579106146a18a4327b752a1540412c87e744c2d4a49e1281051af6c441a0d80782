@@ -1,0 +1,27 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.toUnixTimestamp = void 0;
+/**
+ * Check if timestamp is in milliseconds
+ * @param timestamp
+ */
+function isTimestampInMilliseconds(timestamp) {
+    return (Math.abs(Date.now() - timestamp) < Math.abs(Date.now() - timestamp * 1000));
+}
+/**
+ * Convert optional timestamp to unix timestamp
+ * @param timestamp
+ */
+function toUnixTimestamp(timestamp) {
+    if (!timestamp)
+        return undefined;
+    if (timestamp instanceof Date) {
+        timestamp = timestamp.getTime();
+    }
+    if (isTimestampInMilliseconds(timestamp)) {
+        timestamp = Math.floor(timestamp / 1000);
+    }
+    return timestamp;
+}
+exports.toUnixTimestamp = toUnixTimestamp;
+//# sourceMappingURL=date.js.map

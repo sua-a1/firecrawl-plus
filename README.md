@@ -37,7 +37,27 @@
 
 Empower your AI apps with clean data from any website. Featuring advanced scraping, crawling, and data extraction capabilities.
 
-_This repository is in development, and we’re still integrating custom modules into the mono repo. It's not fully ready for self-hosted deployment yet, but you can run it locally._
+_This repository is in development, and we're still integrating custom modules into the mono repo. It's not fully ready for self-hosted deployment yet, but you can run it locally._
+
+## ✨ Firecrawl Plus Features
+
+Firecrawl Plus extends the core functionality with enterprise-grade features:
+
+- 🤖 **AI-Powered Content Summarization**
+  - Extractive summaries using Transformers.js with TextRank fallback
+  - Abstractive summaries powered by GPT-4
+  - Configurable summary length and type
+  - Bulk processing support
+
+- 🔗 **Advanced Link Management**
+  - Automated broken link detection
+  - Smart link validation and status tracking
+  - Alternative URL suggestions
+  - Detailed link health reports
+
+For detailed API documentation of these features, see our [Plus API Documentation](plus-addition-docs/plus-api-doc.md).
+
+> 🚀 **Local API Availability**: All Firecrawl Plus features are fully functional in the locally run API. This means you can use advanced summarization and link management capabilities completely within your own infrastructure, giving you full control over data processing and privacy.
 
 ## What is Firecrawl?
 
@@ -98,6 +118,20 @@ curl -X POST https://api.firecrawl.dev/v1/crawl \
       "limit": 10,
       "scrapeOptions": {
         "formats": ["markdown", "html"]
+      },
+      "summarization": {
+        "enabled": true,
+        "type": "both",
+        "maxLength": 500,
+        "minLength": 100,
+        "extractiveSummarizer": "transformers",
+        "fallbackStrategy": "textrank",
+        "temperature": 0.3,
+        "modelName": "gpt-4",
+        "earlyStop": true,
+        "noRepeatNgramSize": 3,
+        "numBeams": 4,
+        "useFallbackModel": false
       }
     }'
 ```
@@ -139,6 +173,10 @@ curl -X GET https://api.firecrawl.dev/v1/crawl/123-456-789 \
         "description": "Learn how to use Firecrawl, Groq Llama 3, and Langchain to build a 'Chat with your website' bot.",
         "ogLocaleAlternate": [],
         "statusCode": 200
+      },
+      "summaries": {
+        "extractive": "Key points extracted from the content...",
+        "abstractive": "AI-generated narrative summary..."
       }
     }
   ]
@@ -438,7 +476,7 @@ curl -X POST https://api.firecrawl.dev/v1/batch/scrape \
 
 ### Search
 
-The search endpoint combines web search with Firecrawl’s scraping capabilities to return full page content for any query.
+The search endpoint combines web search with Firecrawl's scraping capabilities to return full page content for any query.
 
 Include `scrapeOptions` with `formats: ["markdown"]` to get complete markdown content for each search result otherwise it defaults to getting SERP results (url, title, description).
 

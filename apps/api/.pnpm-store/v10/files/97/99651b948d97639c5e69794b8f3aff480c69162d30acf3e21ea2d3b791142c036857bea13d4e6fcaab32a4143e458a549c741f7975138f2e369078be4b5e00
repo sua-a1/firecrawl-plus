@@ -1,0 +1,947 @@
+"use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __defProps = Object.defineProperties;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __propIsEnum = Object.prototype.propertyIsEnumerable;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __spreadValues = (a, b) => {
+  for (var prop in b || (b = {}))
+    if (__hasOwnProp.call(b, prop))
+      __defNormalProp(a, prop, b[prop]);
+  if (__getOwnPropSymbols)
+    for (var prop of __getOwnPropSymbols(b)) {
+      if (__propIsEnum.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    }
+  return a;
+};
+var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// src/index.ts
+var src_exports = {};
+__export(src_exports, {
+  BufferedChatMemory: () => BufferedChatMemory,
+  CSVParser: () => CSVParser,
+  CharacterTextSplitter: () => CharacterTextSplitter,
+  Embeddings: () => Embeddings,
+  FileLoader: () => FileLoader,
+  JSONParser: () => JSONParser,
+  LLMChain: () => LLMChain,
+  ListParser: () => ListParser,
+  MemoryLLMChain: () => MemoryLLMChain,
+  ModelProvider: () => ModelProvider,
+  OpenAI: () => OpenAI,
+  Prompt: () => Prompt,
+  SentenceTextSplitter: () => SentenceTextSplitter,
+  TextSplitter: () => TextSplitter,
+  TokenSplitter: () => TokenSplitter,
+  graphTraces: () => graphTraces,
+  prompts: () => prompts_exports,
+  sendTraceToServer: () => sendTraceToServer,
+  setTraceConfig: () => setTraceConfig,
+  trace: () => trace,
+  utils: () => utils
+});
+module.exports = __toCommonJS(src_exports);
+
+// src/tracing.ts
+var import_chalk = __toESM(require("chalk"));
+var import_node_async_hooks = require("async_hooks");
+var import_uuid = require("uuid");
+var import_axios = __toESM(require("axios"));
+var defaultConfig = {
+  serverUrl: "http://localhost:3000/api/traces",
+  send: () => {
+  }
+};
+var config = defaultConfig;
+var setTraceConfig = (newConfig) => {
+  console.log("Setting trace config:", newConfig);
+  config = __spreadValues(__spreadValues({}, defaultConfig), newConfig);
+};
+async function sendTraceToServer(trace2) {
+  try {
+    await import_axios.default.post(config.serverUrl, __spreadValues({}, trace2));
+  } catch (error) {
+    console.error(`Error logging to server: ${error.message}`);
+  }
+}
+var traceContext = new import_node_async_hooks.AsyncLocalStorage();
+var trace = (name, fn, tags) => {
+  return async (...args) => {
+    const parent = traceContext.getStore();
+    const trace2 = {
+      name,
+      inputs: args,
+      outputs: null,
+      tags: tags || [],
+      id: (0, import_uuid.v4)(),
+      parentId: parent == null ? void 0 : parent.id,
+      children: [],
+      timestamp: Date.now()
+    };
+    return await traceContext.run(trace2, async () => {
+      try {
+        const result = await Promise.resolve(fn(...args));
+        trace2.outputs = result;
+        return result;
+      } catch (error) {
+        console.error(`Error in step: ${name} - Error:`, error);
+        trace2.error = error;
+        throw error;
+      } finally {
+        if (parent) {
+          parent.children.push(trace2);
+        }
+        recordTrace(trace2);
+      }
+    });
+  };
+};
+var recordTrace = async (trace2) => {
+  config.send(__spreadValues({}, trace2));
+};
+function graphTraces(traces, indent = 0) {
+  traces.filter((trace2) => !trace2.parentId).forEach((trace2) => {
+    const indentation = "--->".repeat(indent);
+    console.log(import_chalk.default.blueBright(`${indentation}${trace2.name}`), "(root)");
+    printChildren(trace2, indent + 1);
+  });
+}
+function printChildren(trace2, indent) {
+  trace2.children.forEach((child) => {
+    const indentation = "---".repeat(indent);
+    console.log(`${indentation}>`, import_chalk.default.blue(`${child.name}`));
+    printChildren(child, indent + 1);
+  });
+}
+
+// src/chains/LLMChain.ts
+var LLMChain = class {
+  constructor(prompt, provider) {
+    this.prompt = prompt;
+    this.provider = provider;
+  }
+  async _run(variables) {
+    const formattedPrompt = await trace(
+      "prompt.format",
+      (variables2) => this.prompt.format(variables2)
+    )(variables);
+    const completion = await trace(
+      "provider.complete",
+      (prompt) => this.provider.generate(prompt)
+    )(formattedPrompt);
+    const parsed = await trace(
+      "prompt.parse",
+      (completion2) => this.prompt.parse(completion2)
+    )(completion);
+    return parsed;
+  }
+  async run(variables) {
+    return trace("llmchain.run", (variables2) => this._run(variables2))(
+      variables
+    );
+  }
+};
+
+// src/chains/MemoryLLMChain.ts
+var MemoryLLMChain = class extends LLMChain {
+  constructor(prompt, provider, memory) {
+    super(prompt, provider);
+    this.prompt = prompt;
+    this.provider = provider;
+    this.memory = memory;
+    this.prompt = prompt;
+  }
+  async _run(variables) {
+    const formattedPrompt = await trace(
+      "prompt.format",
+      (vars) => this.prompt.format(vars)
+    )(variables);
+    const completion = await trace(
+      "provider.complete",
+      (p) => this.provider.generate(p)
+    )(formattedPrompt);
+    const parsed = await trace("prompt.parse", (c) => this.prompt.parse(c))(
+      completion
+    );
+    return parsed;
+  }
+  async run(variables) {
+    const vars = __spreadProps(__spreadValues({}, variables), { memory: this.memory.get() });
+    return await trace("llmchain.run", (v) => this._run(v))(vars);
+  }
+};
+
+// src/memories/BufferedChatMemory.ts
+var BufferedChatMemory = class {
+  constructor(botName = "Assistant", userName = "User", startingSpeaker = "user", maxInteractionTurns = Infinity) {
+    this.botName = botName;
+    this.userName = userName;
+    this.startingSpeaker = startingSpeaker;
+    this.maxInteractionTurns = maxInteractionTurns;
+    this.botMessages = [];
+    this.userMessages = [];
+  }
+  clear() {
+    this.botMessages = [];
+    this.userMessages = [];
+  }
+  get() {
+    const {
+      firstSpeakerMessage,
+      secondSpeakerMessage,
+      firstSpeakerName,
+      secondSpeakerName
+    } = this.startingSpeaker === "user" ? {
+      firstSpeakerMessage: this.userMessages,
+      secondSpeakerMessage: this.botMessages,
+      firstSpeakerName: this.userName,
+      secondSpeakerName: this.botName
+    } : {
+      firstSpeakerMessage: this.botMessages,
+      secondSpeakerMessage: this.userMessages,
+      firstSpeakerName: this.botName,
+      secondSpeakerName: this.userName
+    };
+    const numInteractionTurns = Math.min(
+      firstSpeakerMessage.length,
+      secondSpeakerMessage.length,
+      this.maxInteractionTurns
+    );
+    let buffer = "";
+    for (let i = 0; i < numInteractionTurns; i++) {
+      buffer += `${firstSpeakerName}: ${firstSpeakerMessage[i]}
+`;
+      buffer += `${secondSpeakerName}: ${secondSpeakerMessage[i]}
+`;
+    }
+    return buffer.trim();
+  }
+  addBotMessage(botMessage) {
+    this.botMessages.push(botMessage);
+  }
+  addUserMessage(userMessage) {
+    this.userMessages.push(userMessage);
+  }
+};
+
+// src/utils/inject-variables.ts
+function injectVariables(template, variables) {
+  let result = template;
+  for (const key in variables) {
+    result = result.replaceAll(`{{${key}}}`, variables[key]);
+  }
+  return result;
+}
+
+// src/internal/Logger.ts
+var DefaultLogger = class {
+  log(message, ...optionalParams) {
+    console.log(message, ...optionalParams);
+  }
+  error(message, ...optionalParams) {
+    console.error(message, ...optionalParams);
+  }
+  warn(message, ...optionalParams) {
+    console.warn(message, ...optionalParams);
+  }
+  debug(message, ...optionalParams) {
+    console.debug(message, ...optionalParams);
+  }
+  info(message, ...optionalParams) {
+    console.info(message, ...optionalParams);
+  }
+};
+var LoggerService = class {
+  constructor(logger2) {
+    this.level = "info";
+    this.logger = logger2 || new DefaultLogger();
+  }
+  static getInstance(logger2) {
+    if (!LoggerService.instance) {
+      LoggerService.instance = new LoggerService(logger2);
+    }
+    return LoggerService.instance;
+  }
+  log(message) {
+    this.logger.log(message);
+  }
+  error(message) {
+    this.logger.error(message);
+  }
+  warn(message) {
+    this.logger.warn(message);
+  }
+  info(message) {
+    this.logger.info(message);
+  }
+  debug(message) {
+    if (this.level !== "debug")
+      return;
+    this.logger.debug(message);
+  }
+  setLogger(logger2) {
+    this.logger = logger2;
+  }
+  setLevel(level) {
+    this.level = level;
+  }
+};
+var logger = LoggerService.getInstance();
+
+// src/prompts/Parser.ts
+var import_sync = require("csv-parse/sync");
+var NoopParser = class {
+  parse(text) {
+    return text;
+  }
+};
+var JSONParser = class {
+  parse(text) {
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  }
+};
+var CSVParser = class {
+  parse(text) {
+    try {
+      return (0, import_sync.parse)(text, {
+        relax_column_count: true,
+        relax_quotes: true,
+        columns: true,
+        skip_empty_lines: true
+      });
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
+  }
+};
+var ListParser = class {
+  parse(text, char = ",") {
+    try {
+      return text.split(char).map((t) => t.trim());
+    } catch (e) {
+      logger.error(e);
+      throw e;
+    }
+  }
+};
+
+// src/prompts/Prompt.ts
+var Prompt = class {
+  constructor(text, variableNames, parser) {
+    this.text = text;
+    this.variableNames = variableNames;
+    this.parser = new NoopParser();
+    if (typeof parser !== "undefined") {
+      this.parser = parser;
+    }
+  }
+  parse(completion) {
+    return this.parser.parse(completion);
+  }
+  format(variables) {
+    const formattedPrompt = injectVariables(this.text, variables);
+    return formattedPrompt;
+  }
+  toJson() {
+    return {
+      text: this.text,
+      variableNames: this.variableNames
+    };
+  }
+};
+
+// src/providers/ModelProvider.ts
+var ModelProvider = class {
+  constructor(type) {
+    this.type = type;
+  }
+};
+
+// src/embeddings/index.ts
+var import_fs = __toESM(require("fs"));
+var import_chalk2 = __toESM(require("chalk"));
+var import_process = require("process");
+function vectorSimilarity(x, y) {
+  let sum = 0;
+  for (let i = 0; i < x.length; i++) {
+    sum += x[i] * y[i];
+  }
+  return sum;
+}
+var Embeddings = class {
+  constructor(key, provider, documents, options) {
+    this.documents = [];
+    this.embeddings = [];
+    this.key = key;
+    this.provider = provider;
+    this.cacheDir = (options == null ? void 0 : options.cacheDir) || `${(0, import_process.cwd)()}/data/cache/index`;
+    this.documents = documents;
+  }
+  isCached() {
+    return import_fs.default.existsSync(`${this.cacheDir}/${this.key}.json`);
+  }
+  clearCache() {
+    import_fs.default.rmSync(`${this.cacheDir}/${this.key}.json`, { force: true });
+    this.embeddings = [];
+  }
+  load() {
+    const jsn = import_fs.default.readFileSync(`${this.cacheDir}/${this.key}.json`, "utf8");
+    const index = JSON.parse(jsn);
+    if (index.key !== this.key) {
+      throw new Error(
+        `The index key ${index.key} does not match the key ${this.key}.`
+      );
+    }
+    if (index.documents.length !== this.documents.length) {
+      throw new Error(
+        `The number of documents in the index ${index.documents.length} does not match the number of documents ${this.documents.length}.`
+      );
+    }
+    this.embeddings = index.embeddings;
+    this.documents = index.documents;
+    console.log(import_chalk2.default.green(`Loaded index for ${this.key} from cache.`));
+  }
+  async index(embeddings) {
+    var _a;
+    if (embeddings) {
+      if (embeddings.length !== this.documents.length) {
+        throw new Error(
+          "The number of embeddings must match the number of documents."
+        );
+      }
+      this.embeddings = embeddings;
+      this.save();
+      return;
+    }
+    console.log(import_chalk2.default.white(`Indexing Documents: ${this.documents.length}`));
+    if (this.isCached()) {
+      console.log(
+        import_chalk2.default.yellow(
+          `Index for ${this.key} already exists. Loading from cache...`
+        )
+      );
+      this.load();
+      return;
+    }
+    console.log(import_chalk2.default.white(`Creating Embeddings: ${this.documents.length}`));
+    for (let i = 0; i < this.documents.length; i++) {
+      const embedding = ((_a = this.embeddings) == null ? void 0 : _a[i]) || await this.provider.embed(this.documents[i].content);
+      this.embeddings.push(embedding);
+    }
+    this.save();
+  }
+  isInitialized() {
+    var _a;
+    return this.embeddings.length > 0 && this.documents.length > 0 && ((_a = this.embeddings) == null ? void 0 : _a.length) === this.documents.length;
+  }
+  async query(query, k) {
+    if (!this.isInitialized()) {
+      throw new Error("Index not initialized. Call index() or load() first.");
+    }
+    console.log(import_chalk2.default.white(`Querying Index: ${this.key}`));
+    let queryEmbedding;
+    if (typeof query === "string") {
+      const embedding = await this.provider.embed(query);
+      queryEmbedding = embedding;
+    }
+    const similarity = this.embeddings.map((row) => {
+      return vectorSimilarity(row, queryEmbedding);
+    });
+    const documents = similarity.map((similarity2, i) => {
+      return {
+        document: this.documents[i],
+        similarity: similarity2,
+        query
+      };
+    }).sort((a, b) => {
+      return a.similarity > b.similarity ? -1 : 1;
+    }).slice(0, k);
+    return documents;
+  }
+  update(data) {
+    console.warn("not implemented yet :p");
+  }
+  delete(data) {
+    console.warn("not implemented yet :p");
+  }
+  save() {
+    const cachePath = `${this.cacheDir}/${this.key}.json`;
+    if (!import_fs.default.existsSync(this.cacheDir)) {
+      import_fs.default.mkdirSync(this.cacheDir, { recursive: true });
+    }
+    import_fs.default.writeFileSync(
+      cachePath,
+      JSON.stringify({
+        key: this.key,
+        embeddings: this.embeddings,
+        documents: this.documents
+      })
+    );
+  }
+};
+
+// src/prompts/prompts.ts
+var prompts_exports = {};
+__export(prompts_exports, {
+  QA: () => QA,
+  chatbot: () => chatbot,
+  extractCSV: () => extractCSV,
+  extractJSON: () => extractJSON,
+  extractText: () => extractText,
+  summarize: () => summarize
+});
+var QA = () => new Prompt(
+  `
+Given the following document, answer the question if you can.
+If you don't have enough information, don't return anything.
+Document:
+{{document}}
+
+Question:
+{{question}}
+
+Answer:`.trim(),
+  ["document", "question"]
+);
+var extractText = () => new Prompt(
+  `
+Use the following portion of a long document to see if any of the text is relevant to answer the question. 
+Return any relevant text verbatim.
+{{document}}
+Question: {{question}}
+Relevant text, if any:`.trim(),
+  ["document", "question"]
+);
+var summarize = () => new Prompt(
+  `Write a concise summary of the text below:
+
+{{document}}
+
+Summary:`.trim(),
+  ["document"]
+);
+var chatbot = () => new Prompt(
+  `You are Assistant. Help the user as much as possible.
+
+{{memory}}
+User: {{userInput}}
+Assistant:`.trim(),
+  ["memory", "userInput"]
+);
+var extractJSON = () => new Prompt(
+  `Given this data and a typescript type, return a valid, stringified JSON Object representing an instance of the type.
+  Make sure the response is JUST the object. Not a variable or anything else.
+  Example:
+
+  Data: Hey my name is Colin.
+  Type:
+  {
+    name: string
+  }
+  Stringified JSON:
+  {
+    "name": "John",
+  }
+
+  ---
+
+  Notes:
+  - undefined and null are not valid json fields, instead, just leave out the field.
+  - convert date information to stringified iso date format for dates.
+  - optional, undefined or nullable fields in the response mean that you can skip them OR you can add them depending on the data.
+
+  ---
+   
+  Okay, here's the Data and the Type:
+  Data:
+  {{data}}
+
+  Type:
+  {{type}}
+
+  Stringified JSON:
+  `.trim(),
+  ["data", "type"],
+  new JSONParser()
+);
+var extractCSV = () => new Prompt(
+  `Given this data and a list of headers, return a CSV file containing the column data.
+    Example:
+  
+    Data: Hey my name is Colin and I'm a 29 year old software engineer.
+    Headers: Name,Age,Occupation 
+    CSV:
+    Name,Age,Occupation
+    Colin,29,Software Engineer
+  
+    Notes:
+    - if the data contains ',' then escape it with a backslash. 
+    - If no value exists for a header, then leave the cell empty.
+    - convert date information to stringified iso date format for dates.
+    - the first row of the csv should be the headers
+    - DON't add any additional headers. Only the ones provided.
+    - ONLY output the data for the columns, nothing else.
+    - Make sure there is no extra whitespace around the csv data.
+  
+    ---
+     
+    Okay, here is the Data and the Headers:
+    Data:
+    {{data}}
+
+    Headers:
+    {{headers}}
+
+    CSV:
+    {{headers}}
+    `.trim(),
+  ["data", "headers"],
+  new CSVParser()
+);
+
+// src/providers/OpenAI.ts
+var import_openai = require("openai");
+
+// src/utils/unescape-stop-tokens.ts
+var unescapeStopTokens = (stop_tokens) => {
+  logger.debug(`Unescaping stop tokens: ${stop_tokens}`);
+  if (Array.isArray(stop_tokens)) {
+    return stop_tokens.map((token) => {
+      return JSON.parse(`"${token}"`);
+    });
+  } else {
+    return JSON.parse(`"${stop_tokens}"`);
+  }
+};
+
+// src/providers/OpenAI.ts
+var import_gpt3_tokenizer = __toESM(require("gpt3-tokenizer"));
+var OpenAIConfiguration = class extends import_openai.Configuration {
+};
+var OpenAI = class extends ModelProvider {
+  constructor(apiKey) {
+    super(0 /* OpenAI */);
+    this.completionsConfig = DEFAULT_COMPLETION_OPTIONS;
+    this.embeddingsConfig = DEFAULT_OPENAI_EMBEDDINGS_CONFIG;
+    this.tokenizer = new OpenAITokenizer();
+    this.embedOne = async (text, options) => {
+      const result = await this.api.createEmbedding(__spreadProps(__spreadValues({}, options), {
+        input: text.replace(/\n/g, " ")
+      }));
+      return result == null ? void 0 : result.data.data[0].embedding;
+    };
+    this.embedMany = async (texts, options) => {
+      const batchResults = await Promise.all(
+        texts.map(
+          (text) => this.api.createEmbedding(__spreadProps(__spreadValues({}, options), {
+            input: text.replace(/\n/g, " ")
+          }))
+        )
+      );
+      return batchResults.map((result) => result == null ? void 0 : result.data.data[0].embedding);
+    };
+    this.apiKey = apiKey;
+    const config2 = new OpenAIConfiguration({
+      apiKey
+    });
+    this.config = config2;
+    this.api = new import_openai.OpenAIApi(config2);
+  }
+  countTokens(text) {
+    return this.tokenizer.countTokens(text);
+  }
+  async generate(promptText, options = DEFAULT_COMPLETION_OPTIONS) {
+    var _a;
+    try {
+      if (options.stop != null) {
+        options.stop = unescapeStopTokens(options.stop);
+      }
+      const res = await this.api.createCompletion(__spreadProps(__spreadValues({
+        prompt: promptText
+      }, options), {
+        model: options.model || DEFAULT_COMPLETION_OPTIONS.model
+      }));
+      return ((_a = res.data.choices[0]) == null ? void 0 : _a.text) || "";
+    } catch (e) {
+      console.log(e);
+    }
+    return "failed";
+  }
+  async stream(promptText, options = DEFAULT_COMPLETION_OPTIONS) {
+    throw "not implemented";
+  }
+  async embed(textOrTexts, options = DEFAULT_OPENAI_EMBEDDINGS_CONFIG) {
+    if (Array.isArray(textOrTexts)) {
+      return this.embedMany(textOrTexts, options);
+    } else {
+      return this.embedOne(textOrTexts, options);
+    }
+  }
+};
+var DEFAULT_COMPLETION_OPTIONS = {
+  model: "text-davinci-003",
+  max_tokens: 128,
+  temperature: 0.7,
+  stop: null
+};
+var DEFAULT_OPENAI_EMBEDDINGS_CONFIG = {
+  model: "text-embedding-ada-002"
+};
+var OpenAITokenizer = class {
+  constructor(type = "gpt3") {
+    this.tokenizer = new import_gpt3_tokenizer.default({ type });
+  }
+  encode(text) {
+    const { bpe, text: texts } = this.tokenizer.encode(text);
+    return {
+      tokens: bpe,
+      texts
+    };
+  }
+  decode(tokens) {
+    return this.tokenizer.decode(tokens);
+  }
+  truncate(text, maxTokens) {
+    const { tokens } = this.encode(text);
+    if (tokens.length > maxTokens) {
+      return this.decode(tokens.slice(0, maxTokens));
+    }
+    return text;
+  }
+  countTokens(text) {
+    const { tokens } = this.encode(text);
+    return tokens.length;
+  }
+  countDocumentTokens(doc) {
+    return this.countTokens(doc.content);
+  }
+};
+
+// src/loaders/index.ts
+var import_fs2 = __toESM(require("fs"));
+var FileLoader = class {
+  constructor(path, meta) {
+    this.path = path;
+    this.meta = meta;
+  }
+  async load() {
+    const content = await import_fs2.default.promises.readFile(this.path, "utf-8");
+    return [
+      {
+        content,
+        meta: __spreadValues({
+          source: this.path
+        }, this.meta)
+      }
+    ];
+  }
+};
+
+// src/utils/TextSplitter.ts
+var import_nlp_sentencize = __toESM(require("@stdlib/nlp-sentencize"));
+var import_gpt3_tokenizer2 = __toESM(require("gpt3-tokenizer"));
+var TextSplitter = class {
+  constructor(opts) {
+    this.chunk = false;
+    this.chunkSize = 1e3;
+    this.overlap = 200;
+    this.tokenizer = new import_gpt3_tokenizer2.default({ type: "gpt3" });
+    this.getLength = (text) => {
+      return this.lengthFn(text);
+    };
+    this.lengthFn = (text) => {
+      const encoded = this.tokenizer.encode(text);
+      return encoded.bpe.length;
+    };
+    if (typeof (opts == null ? void 0 : opts.chunkSize) !== "undefined") {
+      this.chunkSize = opts.chunkSize;
+    }
+    if (typeof (opts == null ? void 0 : opts.overlap) !== "undefined") {
+      if (opts.overlap > this.chunkSize) {
+        throw Error(
+          `Error: Overlap is greater than chunkSize, overlap ${opts.overlap}, chunksize: ${this.chunkSize}`
+        );
+      }
+      this.overlap = opts.overlap;
+    }
+    if (typeof (opts == null ? void 0 : opts.chunk) !== "undefined") {
+      this.chunk = opts.chunk;
+    }
+    if (typeof (opts == null ? void 0 : opts.lengthFn) !== "undefined") {
+      this.lengthFn = opts.lengthFn;
+    }
+  }
+  mergeText(texts, separator = " ") {
+    return texts.map((text) => text.trim()).join(separator);
+  }
+  mergeDocuments(docs) {
+    const texts = docs.map((doc) => doc.content);
+    return this.mergeText(texts);
+  }
+  splitDocuments(docs, opts) {
+    const texts = docs.map((doc) => doc.content);
+    const metas = docs.map((doc) => doc.meta);
+    return this.createDocuments(texts, metas, opts);
+  }
+  createDocuments(texts, metas = [], opts) {
+    const docs = [];
+    for (let i = 0; i < texts.length; i++) {
+      const text = texts[i];
+      const chunks = this.splitText(text, opts);
+      for (const chunk of chunks) {
+        docs.push({
+          content: chunk,
+          meta: metas[i] || {}
+        });
+      }
+    }
+    return docs;
+  }
+  createChunks(texts, separator) {
+    return texts.reduce((chunks, text) => {
+      let chunk = "";
+      const lastChunk = chunks.length && chunks[chunks.length - 1] || "";
+      const lastChunkLength = this.lengthFn(lastChunk);
+      if (lastChunkLength < this.chunkSize + this.overlap) {
+        chunk = chunks.pop() || "";
+      }
+      chunk = chunk === "" ? text : chunk + separator + text;
+      if (chunk.length) {
+        chunks.push(chunk);
+      }
+      return chunks;
+    }, []);
+  }
+};
+var CharacterTextSplitter = class extends TextSplitter {
+  constructor(character = "\\n\\n", opts) {
+    super(opts);
+    this.splitText = (text, opts) => {
+      const texts = text.split(this.character).map((t) => t.trim());
+      return (opts == null ? void 0 : opts.chunk) || this.chunk ? this.createChunks(texts, this.character) : texts.filter((t) => t.length);
+    };
+    this.character = character;
+  }
+};
+var SentenceTextSplitter = class extends TextSplitter {
+  splitText(text, opts) {
+    const sentences = (0, import_nlp_sentencize.default)(text).map((s) => s.trim());
+    return (opts == null ? void 0 : opts.chunk) || this.chunk ? this.createChunks(sentences, " ") : sentences.filter((t) => t.length);
+  }
+};
+var TokenSplitter = class extends TextSplitter {
+  constructor() {
+    super(...arguments);
+    this.chunk = true;
+  }
+  splitText(text, opts) {
+    const chunkSize = (opts == null ? void 0 : opts.chunkSize) || this.chunkSize;
+    const overlap = (opts == null ? void 0 : opts.overlap) || this.overlap;
+    const chunks = [];
+    const encoded = this.tokenizer.encode(text);
+    const encodedLength = encoded.bpe.length;
+    let startIndex = 0;
+    let currentIndex = Math.min(startIndex + chunkSize, encodedLength);
+    let encodedChunk = encoded.bpe.slice(startIndex, currentIndex);
+    while (startIndex < encodedLength) {
+      const chunk = this.tokenizer.decode(encodedChunk);
+      chunks.push(chunk);
+      startIndex += chunkSize - overlap;
+      currentIndex = Math.min(startIndex + chunkSize, encodedLength);
+      encodedChunk = encoded.bpe.slice(startIndex, currentIndex);
+    }
+    return chunks.map((chunk) => chunk.trim());
+  }
+};
+
+// src/utils/parse-json-sse.ts
+var parseJsonSSE = async ({
+  data,
+  onParse,
+  onFinish
+}) => {
+  const reader = data.getReader();
+  const decoder = new TextDecoder();
+  let done = false;
+  let tempState = "";
+  while (!done) {
+    const { value, done: doneReading } = await reader.read();
+    done = doneReading;
+    const newValue = decoder.decode(value).split("\n\n").filter(Boolean);
+    if (tempState) {
+      newValue[0] = tempState + newValue[0];
+      tempState = "";
+    }
+    newValue.forEach((newVal) => {
+      try {
+        const json = JSON.parse(newVal.replace("data: ", ""));
+        onParse(json);
+      } catch (error) {
+        tempState = newVal;
+      }
+    });
+  }
+  onFinish();
+};
+
+// src/index.ts
+var utils = {
+  unescapeStopTokens,
+  injectVariables,
+  parseJsonSSE
+};
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  BufferedChatMemory,
+  CSVParser,
+  CharacterTextSplitter,
+  Embeddings,
+  FileLoader,
+  JSONParser,
+  LLMChain,
+  ListParser,
+  MemoryLLMChain,
+  ModelProvider,
+  OpenAI,
+  Prompt,
+  SentenceTextSplitter,
+  TextSplitter,
+  TokenSplitter,
+  graphTraces,
+  prompts,
+  sendTraceToServer,
+  setTraceConfig,
+  trace,
+  utils
+});

@@ -1,0 +1,13 @@
+import * as z from "zod";
+export type Security = {
+    apiKeyAuth: string;
+};
+/** @internal */
+export declare namespace Security$ {
+    const inboundSchema: z.ZodType<Security, z.ZodTypeDef, unknown>;
+    type Outbound = {
+        ApiKeyAuth: string;
+    };
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, Security>;
+}
+//# sourceMappingURL=security.d.ts.map

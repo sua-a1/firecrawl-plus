@@ -1,0 +1,5 @@
+import { TagType } from './enums';
+export declare const TagNameMap: Record<TagType, {
+    description: string;
+    examples: string;
+}>;

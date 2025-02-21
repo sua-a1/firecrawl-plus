@@ -1,0 +1,2 @@
+import { TagType } from '../enums';
+export declare type TaggedWord = [string, TagType];

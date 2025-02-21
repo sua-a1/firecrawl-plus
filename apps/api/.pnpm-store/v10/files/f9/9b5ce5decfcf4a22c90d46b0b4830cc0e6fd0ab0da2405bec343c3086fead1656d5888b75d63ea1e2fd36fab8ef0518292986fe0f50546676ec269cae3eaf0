@@ -1,0 +1,49 @@
+import * as shared from "../shared";
+import * as z from "zod";
+export type PartitionRequest = {
+    partitionParameters: shared.PartitionParameters;
+    unstructuredApiKey?: string | null | undefined;
+};
+export type PartitionResponse = {
+    /**
+     * HTTP response content type for this operation
+     */
+    contentType: string;
+    /**
+     * Successful Response
+     */
+    elements?: Array<{
+        [k: string]: any;
+    }> | undefined;
+    /**
+     * HTTP response status code for this operation
+     */
+    statusCode: number;
+    /**
+     * Raw HTTP response; suitable for custom response parsing
+     */
+    rawResponse: Response;
+};
+/** @internal */
+export declare namespace PartitionRequest$ {
+    const inboundSchema: z.ZodType<PartitionRequest, z.ZodTypeDef, unknown>;
+    type Outbound = {
+        partition_parameters: shared.PartitionParameters$.Outbound;
+        "unstructured-api-key"?: string | null | undefined;
+    };
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, PartitionRequest>;
+}
+/** @internal */
+export declare namespace PartitionResponse$ {
+    const inboundSchema: z.ZodType<PartitionResponse, z.ZodTypeDef, unknown>;
+    type Outbound = {
+        ContentType: string;
+        Elements?: Array<{
+            [k: string]: any;
+        }> | undefined;
+        StatusCode: number;
+        RawResponse: never;
+    };
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, PartitionResponse>;
+}
+//# sourceMappingURL=partition.d.ts.map

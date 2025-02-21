@@ -1,0 +1,15 @@
+/*!
+ * jsPOS
+ *
+ * Copyright 2010, Percy Wegmann
+ * Licensed under the LGPLv3 license
+ * http://www.opensource.org/licenses/lgpl-3.0.html
+ */
+import { TagType } from './enums';
+import { TaggedSentence, TaggedWord } from './types';
+export declare class Tagger {
+    wordInLexicon(word: string): boolean;
+    tag(words: string[]): TaggedSentence;
+    prettyPrint(taggedWords: TaggedWord[]): void;
+    extendLexicon(lexicon: Record<string, TagType[]>): void;
+}

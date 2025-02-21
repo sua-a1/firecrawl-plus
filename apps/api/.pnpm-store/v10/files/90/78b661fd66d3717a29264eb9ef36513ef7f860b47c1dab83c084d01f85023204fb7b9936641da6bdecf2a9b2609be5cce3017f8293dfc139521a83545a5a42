@@ -1,0 +1,10 @@
+import { Rule } from './types';
+export default class BrillTransformationRules {
+    private rules;
+    constructor();
+    getRule(index: number): Rule;
+    setRule(index: number, rule: Rule): void;
+    appendRule(rule: Rule): void;
+    setRules(newRules: Rule[]): void;
+    getRules(): Rule[];
+}

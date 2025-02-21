@@ -89,7 +89,7 @@ function normalizeSchema(x: any): any {
 export function truncateText(text: string, maxTokens: number): string {
   const modifier = 3; // Estimate: 1 token ≈ 3-4 characters for safety
   try {
-    const encoder = encoding_for_model("gpt-4o");
+    const encoder = encoding_for_model("gpt-4");
     // Continuously trim the text until its token count is within the limit.
     while (true) {
       const tokens = encoder.encode(text);
@@ -125,7 +125,7 @@ export async function generateOpenAICompletions(
   previousWarning?: string,
   isExtractEndpoint?: boolean,
   model: TiktokenModel = (process.env.MODEL_NAME as TiktokenModel) ||
-    "gpt-4o-mini",
+    "gpt-4",
 ): Promise<{
   extract: any;
   numTokens: number;
@@ -354,7 +354,7 @@ export async function generateSchemaFromPrompt(prompt: string): Promise<any> {
   for (const temp of temperatures) {
     try {
       const result = await openai.beta.chat.completions.parse({
-        model: process.env.MODEL_NAME || "gpt-4o",
+        model: process.env.MODEL_NAME || "gpt-4",
         temperature: temp,
         messages: [
           {

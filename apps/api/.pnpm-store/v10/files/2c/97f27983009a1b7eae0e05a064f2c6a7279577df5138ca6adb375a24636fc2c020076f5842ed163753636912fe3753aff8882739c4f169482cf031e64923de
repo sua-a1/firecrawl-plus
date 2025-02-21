@@ -1,0 +1,19 @@
+import * as z from "zod";
+export type ServerErrorData = {
+    detail?: string | undefined;
+};
+export declare class ServerError extends Error {
+    detail?: string | undefined;
+    /** The original data that was passed to this error instance. */
+    data$: ServerErrorData;
+    constructor(err: ServerErrorData);
+}
+/** @internal */
+export declare namespace ServerError$ {
+    const inboundSchema: z.ZodType<ServerError, z.ZodTypeDef, unknown>;
+    type Outbound = {
+        detail?: string | undefined;
+    };
+    const outboundSchema: z.ZodType<Outbound, z.ZodTypeDef, ServerError>;
+}
+//# sourceMappingURL=servererror.d.ts.map

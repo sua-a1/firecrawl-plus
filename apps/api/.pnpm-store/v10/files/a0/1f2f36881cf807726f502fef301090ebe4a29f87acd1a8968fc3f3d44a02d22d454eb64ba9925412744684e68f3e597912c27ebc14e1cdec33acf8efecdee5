@@ -1,0 +1,86 @@
+import { TrackOptions } from '../types';
+import { InsightIncrementOptions, InsightTrackOptions } from '../types';
+import { IdentifyOptions } from '../types/identify';
+import { GroupOptions } from '../types/group';
+/**
+ * LogSnag Client
+ */
+export default class LogSnag {
+    private readonly token;
+    private readonly project;
+    private disabled;
+    /**
+     * Construct a new LogSnag instance
+     * @param token LogSnag API token
+     * @param project LogSnag project name
+     * @param disableTracking Disable tracking
+     * for more information, see: docs.logsnag.com
+     */
+    constructor({ token, project, disableTracking }: {
+        token: string;
+        project: string;
+        disableTracking?: boolean;
+    });
+    /**
+     * Disable tracking for this instance
+     * (this is useful for development)
+     */
+    disableTracking(): void;
+    /**
+     * Enable tracking for this instance
+     * (this is useful for development)
+     */
+    enableTracking(): void;
+    /**
+     * Get project name
+     * @returns project name
+     */
+    getProject(): string;
+    /**
+     * Creates authorization header
+     * @returns Authorization header value
+     */
+    private createAuthorizationHeader;
+    /**
+     * Creates headers for requests
+     * @private
+     */
+    private createHeaders;
+    /**
+     * Get insight methods
+     */
+    get insight(): {
+        track: (options: InsightTrackOptions) => Promise<boolean>;
+        increment: (options: InsightIncrementOptions) => Promise<boolean>;
+    };
+    /**
+     * Publish a new event to LogSnag
+     * @param options
+     * @returns true when successfully published
+     */
+    track(options: TrackOptions): Promise<boolean>;
+    /**
+     * Identify a user
+     * @param options
+     * @returns true when successfully published
+     */
+    identify(options: IdentifyOptions): Promise<boolean>;
+    /**
+     * Group a user or update group properties
+     * @param options
+     * @returns true when successfully published
+     */
+    group(options: GroupOptions): Promise<boolean>;
+    /**
+     * Publish a new insight to LogSnag
+     * @param options
+     * @returns true when successfully published
+     */
+    protected insightTrack(options: InsightTrackOptions): Promise<boolean>;
+    /**
+     * Increment an insight value
+     * @param options
+     * @returns true when successfully published
+     */
+    protected insightIncrement(options: InsightIncrementOptions): Promise<boolean>;
+}

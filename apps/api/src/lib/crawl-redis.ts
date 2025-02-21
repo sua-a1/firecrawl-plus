@@ -15,6 +15,23 @@ export type StoredCrawl = {
   robots?: string;
   cancelled?: boolean;
   createdAt: number;
+  summarizationStatus?: {
+    enabled: boolean;
+    type: 'extractive' | 'abstractive' | 'both';
+    completedUrls: string[];
+    failedUrls: string[];
+    inProgress: string[];
+  };
+  linkValidationStatus?: {
+    enabled: boolean;
+    completedUrls: string[];
+    brokenLinks: Array<{
+      url: string;
+      statusCode: number;
+      suggestedAlternative?: string;
+    }>;
+    inProgress: string[];
+  };
 };
 
 export async function saveCrawl(id: string, crawl: StoredCrawl) {
@@ -398,6 +415,22 @@ export function crawlToCrawler(
       sc.crawlerOptions?.allowExternalContentLinks ?? false,
     allowSubdomains: sc.crawlerOptions?.allowSubdomains ?? false,
     ignoreRobotsTxt: sc.crawlerOptions?.ignoreRobotsTxt ?? false,
+    summarization: {
+      enabled: sc.crawlerOptions?.summarization?.enabled ?? false,
+      type: sc.crawlerOptions?.summarization?.type ?? 'extractive',
+      maxLength: sc.crawlerOptions?.summarization?.maxLength,
+      minLength: sc.crawlerOptions?.summarization?.minLength,
+      extractiveSummarizer: sc.crawlerOptions?.summarization?.extractiveSummarizer,
+      fallbackStrategy: sc.crawlerOptions?.summarization?.fallbackStrategy,
+      temperature: sc.crawlerOptions?.summarization?.temperature,
+      modelName: sc.crawlerOptions?.summarization?.modelName,
+      earlyStop: sc.crawlerOptions?.summarization?.earlyStop,
+      noRepeatNgramSize: sc.crawlerOptions?.summarization?.noRepeatNgramSize,
+      numBeams: sc.crawlerOptions?.summarization?.numBeams,
+      useFallbackModel: sc.crawlerOptions?.summarization?.useFallbackModel
+    },
+    validateLinks: sc.crawlerOptions?.validateLinks ?? false,
+    projectId: sc.crawlerOptions?.projectId
   });
 
   if (sc.robots !== undefined) {

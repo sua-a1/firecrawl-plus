@@ -290,7 +290,7 @@ export class ResearchLLMService {
       "",
       undefined,
       true,
-      "gpt-4o"
+      "gpt-4"
     );
 
     return extract.report;

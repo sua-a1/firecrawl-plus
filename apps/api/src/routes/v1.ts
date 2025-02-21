@@ -33,6 +33,15 @@ import { generateLLMsTextController } from "../controllers/v1/generate-llmstxt";
 import { generateLLMsTextStatusController } from "../controllers/v1/generate-llmstxt-status";
 import { deepResearchController } from "../controllers/v1/deep-research";
 import { deepResearchStatusController } from "../controllers/v1/deep-research-status";
+import { LinkReportsController } from "../controllers/v1/link-reports";
+import { supabase_service } from "../services/supabase";
+import { 
+  getSummaryController, 
+  generateSummaryController, 
+  getBatchSummariesController, 
+  bulkGenerateSummariesController 
+} from '../controllers/v1/summary';
+import { PlanType } from "../types";
 
 function checkCreditsMiddleware(
   minimum?: number,
@@ -139,17 +148,24 @@ function blocklistMiddleware(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-export function wrap(
-  controller: (req: Request, res: Response) => Promise<any>,
+export function wrap<P = any, ResBody = any, ReqBody = any>(
+  controller: (req: RequestWithAuth<P, ResBody, ReqBody>, res: Response<ResBody>) => Promise<any>,
 ): (req: Request, res: Response, next: NextFunction) => any {
-  return (req, res, next) => {
-    controller(req, res).catch((err) => next(err));
+  return async (req, res, next) => {
+    try {
+      await controller(req as RequestWithAuth<P, ResBody, ReqBody>, res);
+    } catch (error) {
+      next(error);
+    }
   };
 }
 
 expressWs(express());
 
 export const v1Router = express.Router();
+
+// Initialize controllers
+const linkReportsController = new LinkReportsController(supabase_service);
 
 v1Router.post(
   "/scrape",
@@ -285,11 +301,82 @@ v1Router.delete(
 // v0Router.post("/search", searchController);
 
 // Health/Probe routes
-// v1Router.get("/health/liveness", livenessController);
-// v1Router.get("/health/readiness", readinessController);
+v1Router.get("/", (req, res) => {
+  res.json({ status: "ok", version: "v1" });
+});
 
 v1Router.get(
   "/team/credit-usage",
   authMiddleware(RateLimiterMode.CrawlStatus),
   wrap(creditUsageController),
+);
+
+// Link Reports Routes
+v1Router.get(
+  "/links/broken/:project_id",
+  authMiddleware(RateLimiterMode.CrawlStatus),
+  wrap(linkReportsController.getBrokenLinksReport.bind(linkReportsController))
+);
+
+v1Router.post(
+  "/links/fix/batch",
+  authMiddleware(RateLimiterMode.CrawlStatus),
+  wrap(linkReportsController.acceptAllSuggestions.bind(linkReportsController))
+);
+
+v1Router.post(
+  "/links/fix/:link_id",
+  authMiddleware(RateLimiterMode.CrawlStatus),
+  wrap(linkReportsController.manualOverride.bind(linkReportsController))
+);
+
+// Custom auth middleware for summarization endpoints that skips credit checks
+function summaryAuthMiddleware(
+  req: RequestWithMaybeAuth,
+  res: Response,
+  next: NextFunction,
+) {
+  const log = logger.child({
+    module: "auth-middleware",
+    method: "summaryAuthMiddleware",
+  });
+
+  // Basic API key validation only
+  const authHeader = req.headers.authorization?.replace("Bearer ", "");
+  if (!authHeader) {
+    return res.status(401).json({ error: "Missing API key" });
+  }
+
+  // Set basic auth info without credit checks
+  req.auth = {
+    team_id: "1", // Default team ID
+    plan: "pro" as PlanType // Default plan
+  };
+
+  next();
+}
+
+// Update summarization routes to use the new middleware
+v1Router.post(
+  "/summaries/generate",
+  summaryAuthMiddleware,
+  wrap(generateSummaryController)
+);
+
+v1Router.get(
+  "/summaries/batch",
+  summaryAuthMiddleware,
+  wrap(getBatchSummariesController)
+);
+
+v1Router.post(
+  "/summaries/bulk",
+  summaryAuthMiddleware,
+  wrap(bulkGenerateSummariesController)
+);
+
+v1Router.get(
+  "/summaries/:page_url",
+  summaryAuthMiddleware,
+  wrap(getSummaryController)
 );

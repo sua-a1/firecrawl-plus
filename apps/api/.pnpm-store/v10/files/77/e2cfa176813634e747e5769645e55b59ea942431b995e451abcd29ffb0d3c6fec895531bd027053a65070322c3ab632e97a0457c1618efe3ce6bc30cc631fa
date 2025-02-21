@@ -1,0 +1,10 @@
+import { SDKOptions } from "../lib/config";
+import { ClientSDK } from "../lib/sdks";
+import { General } from "./general";
+export declare class UnstructuredClient extends ClientSDK {
+    private readonly options$;
+    constructor(options?: SDKOptions);
+    private _general?;
+    get general(): General;
+}
+//# sourceMappingURL=sdk.d.ts.map

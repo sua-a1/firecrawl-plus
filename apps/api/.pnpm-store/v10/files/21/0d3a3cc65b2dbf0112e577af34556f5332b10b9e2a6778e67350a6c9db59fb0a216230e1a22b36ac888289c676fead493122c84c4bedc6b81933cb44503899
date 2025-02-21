@@ -1,0 +1,46 @@
+import * as shared from "../sdk/models/shared";
+import { HTTPClient } from "./http";
+import { RetryConfig } from "./retries";
+/**
+ * Hosted API Free
+ */
+export declare const ServerFreeApi = "free-api";
+/**
+ * Development server
+ */
+export declare const ServerDevelopment = "development";
+/**
+ * Contains the list of servers available to the SDK
+ */
+export declare const ServerList: {
+    readonly "free-api": "https://api.unstructured.io";
+    readonly development: "http://localhost:8000";
+};
+export type SDKOptions = {
+    /**
+     * The security details required to authenticate the SDK
+     */
+    security?: shared.Security | (() => Promise<shared.Security>);
+    httpClient?: HTTPClient;
+    /**
+     * Allows overriding the default server used by the SDK
+     */
+    server?: keyof typeof ServerList;
+    /**
+     * Allows overriding the default server URL used by the SDK
+     */
+    serverURL?: string;
+    /**
+     * Allows overriding the default retry config used by the SDK
+     */
+    retryConfig?: RetryConfig;
+};
+export declare function serverURLFromOptions(options: SDKOptions): URL | null;
+export declare const SDK_METADATA: {
+    readonly language: "typescript";
+    readonly openapiDocVersion: "1.0.39";
+    readonly sdkVersion: "0.11.3";
+    readonly genVersion: "2.342.6";
+    readonly userAgent: "speakeasy-sdk/typescript 0.11.3 2.342.6 1.0.39 unstructured-client";
+};
+//# sourceMappingURL=config.d.ts.map

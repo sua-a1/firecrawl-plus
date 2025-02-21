@@ -1,0 +1,75 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getStartingPageNumber = exports.getSplitPdfConcurrencyLevel = void 0;
+const common_1 = require("../common");
+/**
+ * Retrieves an integer parameter from the given form data.
+ * If the parameter is not found or is not a valid integer, the default value is returned.
+ *
+ * @param formData - The form data object.
+ * @param parameterName - The name of the parameter to retrieve.
+ * @param defaultValue - The default value to use if the parameter is not found or is not
+ * a valid integer.
+ * @returns The integer value of the parameter.
+ */
+function getIntegerParameter(formData, parameterName, defaultValue) {
+    let numberParameter = defaultValue;
+    const formDataParameter = formData.get(parameterName);
+    if (formDataParameter === null) {
+        return numberParameter;
+    }
+    const formDataNumberParameter = parseInt(formDataParameter);
+    if (isNaN(formDataNumberParameter)) {
+        console.warn(`'${parameterName}' is not a valid integer. Using default value '${defaultValue}'.`);
+    }
+    else {
+        numberParameter = formDataNumberParameter;
+    }
+    return numberParameter;
+}
+/**
+ * Gets the number of maximum requests that can be made when splitting PDF.
+ * - The number of maximum requests is determined by the value of the request parameter
+ * `split_pdf_thread`.
+ * - If the parameter is not set or has an invalid value, the default number of
+ * parallel requests (5) is used.
+ * - If the number of maximum requests is greater than the maximum allowed (15), it is
+ * clipped to the maximum value.
+ * - If the number of maximum requests is less than 1, the default number of parallel
+ * requests (5) is used.
+ *
+ * @returns The number of maximum requests to use when calling the API to split a PDF.
+ */
+function getSplitPdfConcurrencyLevel(formData) {
+    let splitPdfConcurrencyLevel = getIntegerParameter(formData, common_1.PARTITION_FORM_SPLIT_PDF_CONCURRENCY_LEVEL, common_1.DEFAULT_NUMBER_OF_PARALLEL_REQUESTS);
+    if (splitPdfConcurrencyLevel > common_1.MAX_NUMBER_OF_PARALLEL_REQUESTS) {
+        console.warn(`Clipping '${common_1.PARTITION_FORM_SPLIT_PDF_CONCURRENCY_LEVEL}' to ${common_1.MAX_NUMBER_OF_PARALLEL_REQUESTS}.`);
+        splitPdfConcurrencyLevel = common_1.MAX_NUMBER_OF_PARALLEL_REQUESTS;
+    }
+    else if (splitPdfConcurrencyLevel < 1) {
+        console.warn(`'${common_1.PARTITION_FORM_SPLIT_PDF_CONCURRENCY_LEVEL}' is less than 1.`);
+        splitPdfConcurrencyLevel = common_1.DEFAULT_NUMBER_OF_PARALLEL_REQUESTS;
+    }
+    console.info(`Splitting PDF by page on client. Using ${splitPdfConcurrencyLevel} threads when calling API.`);
+    console.info(`Set ${common_1.PARTITION_FORM_SPLIT_PDF_CONCURRENCY_LEVEL} parameter if you want to change that.`);
+    return splitPdfConcurrencyLevel;
+}
+exports.getSplitPdfConcurrencyLevel = getSplitPdfConcurrencyLevel;
+/**
+ * Retrieves the starting page number from the provided form data.
+ * If the starting page number is not a valid integer or less than 1,
+ * it will use the default value `1`.
+ *
+ * @param formData - Request form data.
+ * @returns The starting page number.
+ */
+function getStartingPageNumber(formData) {
+    let startingPageNumber = getIntegerParameter(formData, common_1.PARTITION_FORM_STARTING_PAGE_NUMBER_KEY, common_1.DEFAULT_STARTING_PAGE_NUMBER);
+    if (startingPageNumber < 1) {
+        console.warn(`'${common_1.PARTITION_FORM_STARTING_PAGE_NUMBER_KEY}' is less than 1. Using default value '${common_1.DEFAULT_STARTING_PAGE_NUMBER}'.`);
+        startingPageNumber = common_1.DEFAULT_STARTING_PAGE_NUMBER;
+    }
+    return startingPageNumber;
+}
+exports.getStartingPageNumber = getStartingPageNumber;
+//# sourceMappingURL=form.js.map

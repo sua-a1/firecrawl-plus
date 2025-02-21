@@ -1,0 +1,81 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var enums_1 = require("./enums");
+function rule1(taggedSentence, index) {
+    if (index > 0 && taggedSentence[index - 1][1] === enums_1.TagType.DT) {
+        if (taggedSentence[index][1] === enums_1.TagType.VBD ||
+            taggedSentence[index][1] === enums_1.TagType.VBP ||
+            taggedSentence[index][1] === enums_1.TagType.VB) {
+            taggedSentence[index][1] = enums_1.TagType.NN;
+        }
+    }
+}
+function rule2(taggedSentence, index) {
+    if (taggedSentence[index][1].startsWith('N')) {
+        if (taggedSentence[index][0].indexOf('.') > -1) {
+            if (/[a-zA-Z]{2}/.test(taggedSentence[index][0])) {
+                taggedSentence[index][1] = enums_1.TagType.URL;
+            }
+            else {
+                taggedSentence[index][1] = enums_1.TagType.CD;
+            }
+        }
+        if (!isNaN(parseFloat(taggedSentence[index][0]))) {
+            taggedSentence[index][1] = enums_1.TagType.CD;
+        }
+    }
+}
+function rule3(taggedSentence, index) {
+    if (taggedSentence[index][1].startsWith('N') && taggedSentence[index][0].endsWith('ed')) {
+        taggedSentence[index][1] = enums_1.TagType.VBN;
+    }
+}
+function rule4(taggedSentence, index) {
+    if (taggedSentence[index][0].endsWith('ly')) {
+        taggedSentence[index][1] = enums_1.TagType.RB;
+    }
+}
+function rule5(taggedSentence, index) {
+    if (taggedSentence[index][1].startsWith('NN') && taggedSentence[index][0].endsWith('al')) {
+        taggedSentence[index][1] = enums_1.TagType.JJ;
+    }
+}
+function rule6(taggedSentence, index) {
+    if (index > 0 &&
+        taggedSentence[index][1].startsWith('NN') &&
+        taggedSentence[index - 1][0].toLowerCase() === 'would') {
+        taggedSentence[index][1] = enums_1.TagType.VB;
+    }
+}
+function rule7(taggedSentence, index) {
+    if (taggedSentence[index][1] === enums_1.TagType.NN && taggedSentence[index][0].endsWith('s')) {
+        taggedSentence[index][1] = enums_1.TagType.NNS;
+    }
+}
+function rule8(taggedSentence, index) {
+    if (taggedSentence[index][1].startsWith(enums_1.TagType.NN) && taggedSentence[index][0].endsWith('ing')) {
+        taggedSentence[index][1] = enums_1.TagType.VBG;
+    }
+}
+var BrillTransformationRules = (function () {
+    function BrillTransformationRules() {
+        this.rules = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8];
+    }
+    BrillTransformationRules.prototype.getRule = function (index) {
+        return this.rules[index];
+    };
+    BrillTransformationRules.prototype.setRule = function (index, rule) {
+        this.rules[index] = rule;
+    };
+    BrillTransformationRules.prototype.appendRule = function (rule) {
+        this.rules[this.rules.length] = rule;
+    };
+    BrillTransformationRules.prototype.setRules = function (newRules) {
+        this.rules = newRules;
+    };
+    BrillTransformationRules.prototype.getRules = function () {
+        return this.rules;
+    };
+    return BrillTransformationRules;
+}());
+exports.default = BrillTransformationRules;

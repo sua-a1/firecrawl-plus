@@ -12,6 +12,7 @@ import {
   deepResearchQueueName,
   getIndexQueue,
   getGenerateLlmsTxtQueue,
+  getSummarizationQueue,
 } from "./queue-service";
 import { startWebScraperPipeline } from "../main/runWebScraper";
 import { callWebhook } from "./webhook";
@@ -71,6 +72,8 @@ import { updateDeepResearch } from "../lib/deep-research/deep-research-redis";
 import { performDeepResearch } from "../lib/deep-research/deep-research-service";
 import { performGenerateLlmsTxt } from "../lib/generate-llmstxt/generate-llmstxt-service";
 import { updateGeneratedLlmsTxt } from "../lib/generate-llmstxt/generate-llmstxt-redis";
+import { LinkManagementService } from "./link-management/link-management.service";
+import { InMemoryQueue } from "./queue-service";
 
 configDotenv();
 
@@ -125,6 +128,37 @@ async function finishCrawlIfNeeded(job: Job & { id: string }, sc: StoredCrawl) {
             priority: 10,
           },
         );
+      }
+
+      // Check for broken links if this is a crawl with a project ID
+      if (job.data.project_id && !sc.cancelled && job.data.crawlerOptions !== null) {
+        _logger.debug("Checking for broken links after crawl completion", {
+          crawlId: job.data.crawl_id,
+          projectId: job.data.project_id
+        });
+
+        try {
+          // Create a LinkManagementService instance
+          const linkManagementService = new LinkManagementService(
+            supabase_service,
+            { projectId: job.data.project_id }
+          );
+
+          // Find alternatives for any broken links
+          const alternatives = await linkManagementService.findAlternativesForBrokenLinks();
+          
+          _logger.info("Completed broken links check after crawl", {
+            crawlId: job.data.crawl_id,
+            projectId: job.data.project_id,
+            alternativesFound: alternatives.size
+          });
+        } catch (error) {
+          _logger.error("Failed to check broken links after crawl", {
+            error,
+            crawlId: job.data.crawl_id,
+            projectId: job.data.project_id
+          });
+        }
       }
     })();
 
@@ -525,6 +559,39 @@ const processGenerateLlmsTxtJobInternal = async (
   }
 };
 
+const processSummarizationJobInternal = async (token: string, job: Job & { id: string }) => {
+  const logger = _logger.child({
+    module: "summarization-worker",
+    method: "processSummarizationJobInternal",
+    jobId: job.id,
+    teamId: job.data?.teamId ?? undefined,
+  });
+
+  const extendLockInterval = setInterval(async () => {
+    logger.info(`🔄 Worker extending lock on job ${job.id}`);
+    await job.extendLock(token, jobLockExtensionTime);
+  }, jobLockExtendInterval);
+
+  try {
+    // TODO: Implement actual summarization logic here
+    // This will be implemented in a separate PR
+    const result = {
+      success: true,
+      summary: "Placeholder summary - actual implementation coming soon",
+    };
+
+    await job.moveToCompleted(result, token, false);
+    return result;
+  } catch (error) {
+    logger.error("Error processing summarization job", { error });
+    Sentry.captureException(error);
+    await job.moveToFailed(error, token, false);
+    return { success: false, error };
+  } finally {
+    clearInterval(extendLockInterval);
+  }
+};
+
 let isShuttingDown = false;
 
 process.on("SIGINT", () => {
@@ -540,152 +607,63 @@ process.on("SIGTERM", () => {
 let cantAcceptConnectionCount = 0;
 
 const workerFun = async (
-  queue: Queue,
+  queue: Queue | InMemoryQueue,
   processJobInternal: (token: string, job: Job) => Promise<any>,
 ) => {
   const logger = _logger.child({ module: "queue-worker", method: "workerFun" });
 
-  const worker = new Worker(queue.name, null, {
-    connection: redisConnection,
-    lockDuration: 1 * 60 * 1000, // 1 minute
-    // lockRenewTime: 15 * 1000, // 15 seconds
-    stalledInterval: 30 * 1000, // 30 seconds
-    maxStalledCount: 10, // 10 times
-  });
+  if (queue instanceof Queue) {
+    // BullMQ queue handling
+    const worker = new Worker(queue.name, async (job) => {
+      const token = uuidv4();
+      return await processJobInternal(token, job);
+    }, {
+      connection: redisConnection,
+      lockDuration: workerLockDuration,
+      stalledInterval: workerStalledCheckInterval,
+      maxStalledCount: 10,
+    });
 
-  worker.startStalledCheckTimer();
-
-  const monitor = await systemMonitor;
-
-  while (true) {
-    if (isShuttingDown) {
-      console.log("No longer accepting new jobs. SIGINT");
-      break;
-    }
-    const token = uuidv4();
-    const canAcceptConnection = await monitor.acceptConnection();
-    if (!canAcceptConnection) {
-      console.log("Cant accept connection");
-      cantAcceptConnectionCount++;
-
-      if (cantAcceptConnectionCount >= 25) {
-        logger.error("WORKER STALLED", {
-          cpuUsage: await monitor.checkCpuUsage(),
-          memoryUsage: await monitor.checkMemoryUsage(),
-        });
-      }
-
-      await sleep(cantAcceptConnectionInterval); // more sleep
-      continue;
-    } else {
-      cantAcceptConnectionCount = 0;
-    }
-
-    const job = await worker.getNextJob(token);
-    if (job) {
+    worker.on('completed', (job) => {
+      logger.info('Job completed successfully', { jobId: job.id });
       if (job.id) {
-        runningJobs.add(job.id);
+        runningJobs.delete(job.id);
       }
+    });
 
-      async function afterJobDone(job: Job<any, any, string>) {
-        if (job.id) {
-          runningJobs.delete(job.id);
-        }
-
-        if (job.id && job.data && job.data.team_id && job.data.plan) {
-          await removeConcurrencyLimitActiveJob(job.data.team_id, job.id);
-          cleanOldConcurrencyLimitEntries(job.data.team_id);
-
-          // Queue up next job, if it exists
-          // No need to check if we're under the limit here -- if the current job is finished,
-          // we are 1 under the limit, assuming the job insertion logic never over-inserts. - MG
-          const nextJob = await takeConcurrencyLimitedJob(job.data.team_id);
-          if (nextJob !== null) {
-            await pushConcurrencyLimitActiveJob(job.data.team_id, nextJob.id, 60 * 1000); // 60s initial timeout
-
-            await queue.add(
-              nextJob.id,
-              {
-                ...nextJob.data,
-                concurrencyLimitHit: true,
-              },
-              {
-                ...nextJob.opts,
-                jobId: nextJob.id,
-                priority: nextJob.priority,
-              },
-            );
-          }
-        }
+    worker.on('failed', (job, error) => {
+      logger.error('Job failed', { jobId: job?.id, error });
+      if (job?.id) {
+        runningJobs.delete(job.id);
       }
+    });
 
-      if (job.data && job.data.sentry && Sentry.isInitialized()) {
-        Sentry.continueTrace(
-          {
-            sentryTrace: job.data.sentry.trace,
-            baggage: job.data.sentry.baggage,
-          },
-          () => {
-            Sentry.startSpan(
-              {
-                name: "Scrape job",
-                attributes: {
-                  job: job.id,
-                  worker: process.env.FLY_MACHINE_ID ?? worker.id,
-                },
-              },
-              async (span) => {
-                await Sentry.startSpan(
-                  {
-                    name: "Process scrape job",
-                    op: "queue.process",
-                    attributes: {
-                      "messaging.message.id": job.id,
-                      "messaging.destination.name": getScrapeQueue().name,
-                      "messaging.message.body.size": job.data.sentry.size,
-                      "messaging.message.receive.latency":
-                        Date.now() - (job.processedOn ?? job.timestamp),
-                      "messaging.message.retry.count": job.attemptsMade,
-                    },
-                  },
-                  async () => {
-                    let res;
-                    try {
-                      res = await processJobInternal(token, job);
-                    } finally {
-                      await afterJobDone(job);
-                    }
+    worker.on('error', (error) => {
+      logger.error('Worker error', { error });
+    });
 
-                    if (res !== null) {
-                      span.setStatus({ code: 2 }); // ERROR
-                    } else {
-                      span.setStatus({ code: 1 }); // OK
-                    }
-                  },
-                );
-              },
-            );
-          },
-        );
-      } else {
-        Sentry.startSpan(
-          {
-            name: "Scrape job",
-            attributes: {
-              job: job.id,
-              worker: process.env.FLY_MACHINE_ID ?? worker.id,
-            },
-          },
-          () => {
-            processJobInternal(token, job).finally(() => afterJobDone(job));
-          },
-        );
+    process.on('SIGTERM', async () => {
+      await worker.close();
+    });
+
+    process.on('SIGINT', async () => {
+      await worker.close();
+    });
+  } else {
+    // In-memory queue handling
+    queue.on('process', async (job) => {
+      try {
+        const token = uuidv4();
+        await processJobInternal(token, job);
+      } catch (error) {
+        logger.error('Error processing in-memory job', { error, jobId: job.id });
+        throw error;
       }
+    });
 
-      await sleep(gotJobInterval);
-    } else {
-      await sleep(connectionMonitorInterval);
-    }
+    queue.on('error', (error) => {
+      logger.error('In-memory queue error', { error });
+    });
   }
 };
 
@@ -1250,6 +1228,7 @@ async function processJob(job: Job & { id: string }, token: string) {
     workerFun(getExtractQueue(), processExtractJobInternal),
     workerFun(getDeepResearchQueue(), processDeepResearchJobInternal),
     workerFun(getGenerateLlmsTxtQueue(), processGenerateLlmsTxtJobInternal),
+    workerFun(getSummarizationQueue(), processSummarizationJobInternal),
   ]);
 
   console.log("All workers exited. Waiting for all jobs to finish...");

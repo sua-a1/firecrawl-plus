@@ -9,7 +9,12 @@ import { logger as _logger } from "../../lib/logger";
 import https from "https";
 import { redisConnection } from "../../services/queue-service";
 import { extractLinks } from "../../lib/html-transformer";
-import { TimeoutSignal } from "../../controllers/v1/types";
+import { TimeoutSignal, URLTrace } from "../../controllers/v1/types";
+import { LinkManagementService } from "../../services/link-management/link-management.service";
+import { supabase_service } from "../../services/supabase";
+import { SummarizationService } from '../../services/summarization/summarization-service';
+import { SummaryRepository } from '../../services/summarization/summary-repository';
+
 export class WebCrawler {
   private jobId: string;
   private initialUrl: string;
@@ -30,6 +35,26 @@ export class WebCrawler {
   private ignoreRobotsTxt: boolean;
   private logger: typeof _logger;
   private sitemapsHit: Set<string> = new Set();
+  private projectId?: number;
+  private urlTraces: URLTrace[] = [];
+  private validateLinks: boolean = false;
+  private linkManagementService?: LinkManagementService;
+  private summarizationEnabled: boolean = false;
+  private summarizationService?: SummarizationService;
+  private summaryRepository?: SummaryRepository;
+  private summarizationOptions?: {
+    type: 'extractive' | 'abstractive' | 'both';
+    maxLength?: number;
+    minLength?: number;
+    extractiveSummarizer?: 'transformers' | 'textrank' | 'lexrank';
+    fallbackStrategy?: 'textrank' | 'lexrank';
+    temperature?: number;
+    modelName?: string;
+    earlyStop?: boolean;
+    noRepeatNgramSize?: number;
+    numBeams?: number;
+    useFallbackModel?: boolean;
+  };
 
   constructor({
     jobId,
@@ -45,6 +70,9 @@ export class WebCrawler {
     allowExternalContentLinks = false,
     allowSubdomains = false,
     ignoreRobotsTxt = false,
+    projectId,
+    validateLinks = false,
+    summarization = { enabled: false, type: 'extractive' }
   }: {
     jobId: string;
     initialUrl: string;
@@ -59,6 +87,22 @@ export class WebCrawler {
     allowExternalContentLinks?: boolean;
     allowSubdomains?: boolean;
     ignoreRobotsTxt?: boolean;
+    projectId?: number;
+    validateLinks?: boolean;
+    summarization?: {
+      enabled: boolean;
+      type: 'extractive' | 'abstractive' | 'both';
+      maxLength?: number;
+      minLength?: number;
+      extractiveSummarizer?: 'transformers' | 'textrank' | 'lexrank';
+      fallbackStrategy?: 'textrank' | 'lexrank';
+      temperature?: number;
+      modelName?: string;
+      earlyStop?: boolean;
+      noRepeatNgramSize?: number;
+      numBeams?: number;
+      useFallbackModel?: boolean;
+    };
   }) {
     this.jobId = jobId;
     this.initialUrl = initialUrl;
@@ -77,6 +121,51 @@ export class WebCrawler {
     this.allowSubdomains = allowSubdomains ?? false;
     this.ignoreRobotsTxt = ignoreRobotsTxt ?? false;
     this.logger = _logger.child({ crawlId: this.jobId, module: "WebCrawler" });
+    this.projectId = projectId;
+    this.validateLinks = validateLinks;
+    this.summarizationEnabled = summarization.enabled;
+
+    if (this.summarizationEnabled && projectId) {
+      this.summarizationService = new SummarizationService();
+      this.summaryRepository = new SummaryRepository(supabase_service);
+      this.summarizationOptions = summarization;
+      this.logger.info('Summarization enabled for crawler', {
+        type: summarization.type,
+        projectId
+      });
+    }
+
+    if (projectId) {
+      this.linkManagementService = new LinkManagementService(supabase_service, {
+        projectId,
+        batchSize: 50,
+        maxRetries: 3,
+        allowExternalLinks: allowExternalContentLinks,
+        includeSubdomains: allowSubdomains,
+        rateLimit: {
+          maxRequestsPerMinute: 300,
+          delayBetweenBatches: 2000,
+          requestsPerBatch: 10
+        },
+        alternativeUrlOptions: {
+          maxResults: 5,
+          minSimilarityScore: 0.7,
+          useWaybackMachine: true,
+          useSimilarityMatching: true,
+          useAIMatching: true,
+          openAIConfig: {
+            apiKey: process.env.OPENAI_API_KEY!,
+            model: 'text-embedding-3-small',
+            dimensions: 1536
+          },
+          contextWeights: {
+            url: 0.5,
+            title: 0.3,
+            description: 0.2
+          }
+        }
+      });
+    }
   }
 
   public filterLinks(
@@ -405,21 +494,159 @@ export class WebCrawler {
 
   public async extractLinksFromHTML(html: string, url: string) {
     try {
-      return [...new Set((await this.extractLinksFromHTMLRust(html, url)).map(x => {
+      const uniqueLinks = [...new Set((await extractLinks(html)).map(x => {
         try {
-          return new URL(x, url).href
+          return new URL(x, url).href;
         } catch (e) {
+          this.logger.error('Failed to parse URL', {
+            url: x,
+            baseUrl: url,
+            error: e
+          });
           return null;
         }
       }).filter(x => x !== null) as string[])];
+
+      // Use LinkManagementService if available
+      if (this.linkManagementService && uniqueLinks.length > 0) {
+        try {
+          this.logger.debug('Starting link extraction and storage', {
+            url,
+            totalLinks: uniqueLinks.length,
+            module: 'WebCrawler'
+          });
+
+          // Store links
+          const storedLinks = await this.linkManagementService.extractAndStoreLinks(
+            url,
+            html
+          );
+
+          // Validate stored links if validation is enabled
+          if (this.validateLinks && storedLinks.length > 0) {
+            this.logger.debug('Starting link validation', {
+              url,
+              totalLinks: storedLinks.length
+            });
+
+            try {
+              await this.linkManagementService.validateLinksBatch(storedLinks);
+              
+              // Find alternatives for broken links
+              this.logger.debug('Finding alternatives for broken links', {
+                url,
+                totalLinks: storedLinks.length
+              });
+              
+              const alternatives = await this.linkManagementService.findAlternativesForBrokenLinks();
+              
+              this.logger.debug('Alternatives found', {
+                url,
+                alternativesCount: alternatives.size,
+                alternatives: Array.from(alternatives.entries())
+              });
+            } catch (validationError) {
+              this.logger.error('Link validation failed', {
+                error: validationError,
+                url,
+                totalLinks: storedLinks.length
+              });
+              // Continue execution even if validation fails
+            }
+          }
+          
+          // Log results for debugging
+          this.logger.debug('Links processed', {
+            url,
+            totalLinks: uniqueLinks.length,
+            storedLinks: storedLinks.length,
+            module: 'WebCrawler'
+          });
+        } catch (error) {
+          this.logger.error('Failed to store and validate links', {
+            error,
+            url,
+            module: 'WebCrawler'
+          });
+        }
+      }
+
+      return uniqueLinks;
     } catch (error) {
       this.logger.error("Failed to call html-transformer! Falling back to cheerio...", {
         error,
-        module: "scrapeURL", method: "extractMetadata"
+        module: "scrapeURL", 
+        method: "extractMetadata"
       });
-    }
+      
+      const links = this.extractLinksFromHTMLCheerio(html, url);
+      
+      // Use LinkManagementService if available
+      if (this.linkManagementService && links.length > 0) {
+        try {
+          this.logger.debug('Starting link extraction and storage (cheerio fallback)', {
+            url,
+            totalLinks: links.length,
+            module: 'WebCrawler'
+          });
 
-    return this.extractLinksFromHTMLCheerio(html, url);
+          // Store links
+          const storedLinks = await this.linkManagementService.extractAndStoreLinks(
+            url,
+            html
+          );
+
+          // Validate stored links if validation is enabled
+          if (this.validateLinks && storedLinks.length > 0) {
+            this.logger.debug('Starting link validation (cheerio fallback)', {
+              url,
+              totalLinks: storedLinks.length
+            });
+
+            try {
+              await this.linkManagementService.validateLinksBatch(storedLinks);
+              
+              // Find alternatives for broken links
+              this.logger.debug('Finding alternatives for broken links (cheerio fallback)', {
+                url,
+                totalLinks: storedLinks.length
+              });
+              
+              const alternatives = await this.linkManagementService.findAlternativesForBrokenLinks();
+              
+              this.logger.debug('Alternatives found (cheerio fallback)', {
+                url,
+                alternativesCount: alternatives.size,
+                alternatives: Array.from(alternatives.entries())
+              });
+            } catch (validationError) {
+              this.logger.error('Link validation failed (cheerio fallback)', {
+                error: validationError,
+                url,
+                totalLinks: storedLinks.length
+              });
+              // Continue execution even if validation fails
+            }
+          }
+          
+          // Log results for debugging
+          this.logger.debug('Links processed (cheerio fallback)', {
+            url,
+            totalLinks: links.length,
+            storedLinks: storedLinks.length,
+            module: 'WebCrawler'
+          });
+        } catch (error) {
+          this.logger.error('Failed to store and validate links (cheerio fallback)', {
+            error,
+            url,
+            module: 'WebCrawler'
+          });
+        }
+      }
+
+      return links;
+    }
   }
 
   private isRobotsAllowed(
@@ -691,5 +918,56 @@ export class WebCrawler {
     }
 
     return sitemapCount;
+  }
+
+  private async generateAndStoreSummary(url: string, content: string): Promise<void> {
+    if (!this.summarizationEnabled || !this.summarizationService || !this.summaryRepository || !this.projectId || !this.summarizationOptions) {
+      return;
+    }
+
+    try {
+      this.logger.debug('Generating summary for URL', { url });
+      
+      const summary = await this.summarizationService.generateSummary(content, {
+        type: this.summarizationOptions.type,
+        maxLength: this.summarizationOptions.maxLength,
+        minLength: this.summarizationOptions.minLength,
+        extractiveSummarizer: this.summarizationOptions.extractiveSummarizer,
+        fallbackStrategy: this.summarizationOptions.fallbackStrategy,
+        temperature: this.summarizationOptions.temperature,
+        modelName: this.summarizationOptions.modelName,
+        earlyStop: this.summarizationOptions.earlyStop,
+        noRepeatNgramSize: this.summarizationOptions.noRepeatNgramSize,
+        numBeams: this.summarizationOptions.numBeams,
+        useFallbackModel: this.summarizationOptions.useFallbackModel
+      });
+
+      await this.summaryRepository.storeSummary({
+        project_id: this.projectId,
+        page_url: url,
+        original_text: content,
+        extractive_summary: summary.extractive_summary || null,
+        abstractive_summary: summary.abstractive_summary || null,
+        summary_type: this.summarizationOptions.type,
+        metadata: {
+          processedAt: new Date().toISOString(),
+          crawlJobId: this.jobId
+        }
+      });
+
+      this.logger.debug('Summary stored successfully', { url });
+    } catch (error) {
+      this.logger.error('Error generating or storing summary', { error, url });
+      // Don't throw - we want to continue crawling even if summarization fails
+    }
+  }
+
+  public async processPage(url: string, content: string): Promise<void> {
+    // ... existing processing code ...
+
+    // Generate and store summary if enabled
+    if (this.summarizationEnabled) {
+      await this.generateAndStoreSummary(url, content);
+    }
   }
 }

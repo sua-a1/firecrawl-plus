@@ -10,7 +10,8 @@ Try to use existing URL extraction functionality first. Check @extract/url-proce
 Steps:
 Extract URLs:
 Parse each crawled page 
-Extract absolute URLs (convert relative URLs).
+Extract absolute URLs (convert relative URLs
+).
 Store internal and external links separately.
 Store URLs in Supabase:
 
@@ -52,7 +53,7 @@ a. Archive Lookup (Wayback Machine API)
 API Endpoint: https://archive.org/wayback/available?url={URL}
 b. Google/Bing API (try to see if we can use existing search functionality first)
 
-3. Option 3: AI-Based Similarity Matching (Pre-Trained Models Only)
+c. Option 3: AI-Based Similarity Matching (Pre-Trained Models Only)
 Pre-trained Models for Text Similarity:
 OpenAI Embeddings (text-embedding-ada-002) – Faster and easy to integrate
 Workflow:
@@ -71,57 +72,105 @@ Original URL
 Source Page (where the broken link was found)
 Status Code
 Suggested Alternative (if available)
-Export Formats:
-Display the report in the FireCrawl dashboard using a simple table.
-Allow users to export the report as CSV or JSON.
-API Endpoint for Reports:
-Create an API route /api/reports/broken-links to return the report in JSON format.
-Example JSON Output:
+Manual Override URL (if set)
+API Endpoints for Reports and Link Management:
+
+1. Broken Links Report (Project-Specific):
+GET /api/reports/broken-links/[project_id]
+Returns a comprehensive report of all broken links for a specific project
+Parameters:
+- project_id: The Mendable project ID to fetch broken links for
+Response Format:
 {
     "broken_links": [
         {
+            "id": 123,
             "source_page": "https://example.com/articles",
             "broken_url": "https://oldblog.com/article1",
             "status_code": 404,
-            "suggested_alternative": "https://archive.org/web/oldblog.com/article1"
-        },
-        {
-            "source_page": "https://example.com/resources",
-            "broken_url": "https://resourcehub.com/file.pdf",
-            "status_code": 403,
-            "suggested_alternative": "https://resourcehub.com/file-replacement.pdf"
+            "suggested_alternative": "https://archive.org/web/oldblog.com/article1",
+            "manual_override": null,
+            "anchor_text": "Learn More",
+            "last_checked": "2024-03-20T10:30:00Z"
         }
-    ]
+    ],
+    "total_count": 1,
+    "project_id": "project_123"
 }
-5. Dashboard Integration & User Interaction
-Goal: Allow users to view and interact with broken link reports in FireCrawl’s dashboard.
 
-Frontend Changes (NestJS):
+2. Accept All Suggested Alternatives:
+POST /api/links/fix/batch
+Accept all suggested alternative URLs for a project's broken links
+Request Body:
+{
+    "project_id": "project_123"
+}
+Response:
+{
+    "updated_count": 10,
+    "success": true
+}
+
+3. Accept Single Suggested Alternative:
+POST /api/links/fix/[link_id]
+Accept suggested alternative URL for a specific link
+Parameters:
+- link_id: The ID of the link to fix
+Response:
+{
+    "id": 123,
+    "success": true,
+    "updated_url": "https://archive.org/web/oldblog.com/article1"
+}
+
+4. Manual Override URL:
+PUT /api/links/[link_id]/override
+Override the suggested alternative with a manually entered URL
+Request Body:
+{
+    "manual_override_url": "https://newurl.com/page",
+    "project_id": "project_123"
+}
+Response:
+{
+    "id": 123,
+    "success": true,
+    "previous_suggestion": "https://archive.org/web/oldblog.com/article1",
+    "new_override": "https://newurl.com/page"
+}
+
+5. Dashboard Integration & User Interaction
+Goal: Allow users to view and interact with broken link reports in FireCrawl's dashboard. (NOT POSSIBLE FOR NOW)
+
+Frontend Changes (NestJS): IMPLEEMENT LATER
 ✅ Display broken links in a sortable, filterable table.
 ✅ Allow users to:
 View the page where the link was found.
 See the broken URL and HTTP status.
 Click on alternative suggestions (open in new tab).
 Override AI suggestions by manually entering a new URL.
+
 Backend API (FastAPI or Flask):
 ✅ Add an API endpoint /api/links/broken to fetch all broken links.
 ✅ Add an API route /api/links/fix to accept user-provided replacements.
 
 Supabase Database Tables (Summary):
 1. links (Stores extracted links & status)
-CREATE TABLE links (
-    id SERIAL PRIMARY KEY,
-    page_url TEXT NOT NULL,
-    extracted_link TEXT NOT NULL,
-    status_code INT,
-    last_checked TIMESTAMP,
-    suggested_alternative TEXT,
-    manual_override TEXT
-);
-2. link_history (Tracks link status over time)
-CREATE TABLE link_history (
-    id SERIAL PRIMARY KEY,
-    link_id INT REFERENCES links(id),
-    checked_at TIMESTAMP,
-    status_code INT
-);
+ALTER TABLE links
+ADD COLUMN manual_override TEXT;
+
+// Note: All other required columns already exist:
+// - project_id INTEGER NOT NULL REFERENCES mendable_project(id)
+// - page_url TEXT NOT NULL
+// - extracted_link TEXT NOT NULL
+// - status_code INT
+// - last_checked TIMESTAMP
+// - suggested_alternative TEXT
+// - anchor_text TEXT
+// - is_internal BOOLEAN DEFAULT false
+// - created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+// - updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+
+// Note: The following tables already exist with all required columns:
+// - link_redirects (Tracks URL redirects)
+// - source_links (Maps links to their sources)

@@ -19,7 +19,11 @@ const migrationFiles = [
   '001_initial_schema.sql',
   '002_function_implementations.sql',
   '003_remaining_functions.sql',
-  '004_missing_functions.sql'
+  '004_missing_functions.sql',
+  '005_link_management_tables.sql',
+  '006_wayback_cache.sql',
+  '007_url_embeddings.sql',
+  '008_extract_auth.sql'
 ];
 
 async function executeStatement(statement: string): Promise<void> {

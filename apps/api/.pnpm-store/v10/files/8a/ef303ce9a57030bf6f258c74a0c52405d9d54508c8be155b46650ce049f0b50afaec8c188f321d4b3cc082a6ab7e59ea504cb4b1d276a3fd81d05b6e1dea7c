@@ -1,0 +1,21 @@
+
+> promptable@0.0.10 test /Users/colin/code/promptable/promptable/packages/promptable
+> jest
+
+Debugger listening on ws://127.0.0.1:64005/493e944e-e37b-4189-90f3-c7417245ae4d
+For help, see: https://nodejs.org/en/docs/inspector
+Debugger attached.
+  [2mconsole.log[22m
+    ok
+[2m[22m
+[2m      [2mat Object.<anonymous> ([22m[2m[0m[36msrc/index.test.ts[39m[0m[2m:4:11)[22m[2m[22m
+
+[0m[7m[1m[32m PASS [39m[22m[27m[0m [2msrc/[22m[1mindex.test.ts[22m
+  [32m✓[39m [2mpromptable (11 ms)[22m
+
+[1mTest Suites: [22m[1m[32m1 passed[39m[22m, 1 total
+[1mTests:       [22m[1m[32m1 passed[39m[22m, 1 total
+[1mSnapshots:   [22m0 total
+[1mTime:[22m        1.124 s
+[2mRan all test suites[22m[2m.[22m
+Waiting for the debugger to disconnect...

@@ -1,0 +1,2 @@
+import { TaggedWord } from './TaggedWord';
+export declare type TaggedSentence = TaggedWord[];
