@@ -45,6 +45,7 @@ export interface WebScraperOptions {
   v1?: boolean;
   is_scrape?: boolean;
   isCrawlSourceScrape?: boolean;
+  project_id?: number;
 }
 
 export interface RunWebScraperParams {

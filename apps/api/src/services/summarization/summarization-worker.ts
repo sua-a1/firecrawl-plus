@@ -1,17 +1,30 @@
 import "dotenv/config";
+import { config } from "dotenv";
+import { resolve } from "path";
 import "../sentry";
 import * as Sentry from "@sentry/node";
 import { Job, Queue, Worker } from "bullmq";
 import { logger as _logger } from "../../lib/logger";
-import { redisConnection, getSummarizationQueue } from "../queue-service";
+import { redisConnection, getSummarizationQueue, summarizationQueueName } from "../queue-service";
 import systemMonitor from "../system-monitor";
 import { v4 as uuidv4 } from "uuid";
-import { ContentExtractor, ContentExtractionOptions } from "./content-extractor";
-import { SummarizationService, SummaryType } from "./summarization-service";
-import { SummaryRepository } from "./summary-repository";
+import { ContentExtractor } from "./content-extractor";
+import { SummarizationService } from "./summarization.service";
+import { SummaryRepository } from "./summary.repository";
 import { createClient } from '@supabase/supabase-js';
 import { Database } from '../../supabase_types';
-import { InMemoryQueue } from "../queue-service";
+
+// Type definitions
+export type SummaryType = 'extractive' | 'abstractive' | 'both';
+
+export interface ContentExtractionOptions {
+  url: string;
+  projectId?: number;
+  teamId?: string;
+}
+
+// Load environment variables from .env file
+config({ path: resolve(__dirname, '../../../.env') });
 
 // Configuration constants
 const workerLockDuration = Number(process.env.WORKER_LOCK_DURATION) || 60000;
@@ -26,208 +39,130 @@ const runningJobs: Set<string> = new Set();
 let isShuttingDown = false;
 
 // Initialize Supabase client
+_logger.info('Initializing Supabase client', {
+  url: process.env.SUPABASE_URL,
+  hasServiceToken: !!process.env.SUPABASE_SERVICE_TOKEN,
+  serviceTokenLength: process.env.SUPABASE_SERVICE_TOKEN?.length
+});
+
 const supabase = createClient<Database>(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
+  process.env.SUPABASE_SERVICE_TOKEN!
 );
 
-// Initialize repositories
-const summaryRepository = new SummaryRepository(supabase);
+// Test Supabase connection
+(async () => {
+  try {
+    _logger.info('Testing Supabase connection...');
+    const { data, error } = await supabase.from('page_summaries').select('count').single();
+    if (error) {
+      _logger.error('Failed to connect to Supabase', { 
+        error,
+        errorMessage: error.message,
+        errorCode: error.code,
+        details: error.details
+      });
+    } else {
+      _logger.info('Successfully connected to Supabase');
+    }
+  } catch (error) {
+    _logger.error('Error testing Supabase connection', { error });
+  }
+})();
+
+// Initialize the summarization queue using BullMQ
+const summarizationQueue = getSummarizationQueue();
+
+// Create the worker
+const worker = new Worker(
+  summarizationQueueName,
+  async (job: Job) => {
+    const jobId = job.id || uuidv4(); // Ensure we always have a job ID
+    _logger.info('Processing summarization job', { jobId });
+    
+    try {
+      runningJobs.add(jobId);
+      
+      const { pageUrl, summaryType, projectId, teamId, originalText } = job.data;
+      
+      // Create content extractor
+      const contentExtractor = new ContentExtractor();
+      
+      // Extract content if needed
+      let textToSummarize = originalText;
+      if (!textToSummarize) {
+        const extractionOptions: ContentExtractionOptions = {
+          url: pageUrl,
+          projectId,
+          teamId
+        };
+        textToSummarize = await contentExtractor.extract(extractionOptions);
+      }
+      
+      // Generate summary
+      const summarizationService = new SummarizationService();
+      const summary = await summarizationService.generateSummary(textToSummarize, summaryType as SummaryType);
+      
+      // Store summary
+      const summaryRepository = new SummaryRepository(supabase);
+      const storedSummary = await summaryRepository.storeSummary({
+        project_id: projectId,
+        page_url: pageUrl,
+        original_text: textToSummarize,
+        extractive_summary: summary.extractive_summary,
+        abstractive_summary: summary.abstractive_summary,
+        summary_type: summaryType,
+        metadata: {
+          processedAt: new Date().toISOString(),
+          jobId: jobId,
+          teamId: teamId
+        }
+      });
+      
+      _logger.info('Successfully processed summarization job', { 
+        jobId,
+        summaryId: storedSummary.id
+      });
+      
+      return { success: true, summary: storedSummary };
+    } catch (error) {
+      _logger.error('Failed to process summarization job', { 
+        jobId,
+        error 
+      });
+      throw error;
+    } finally {
+      runningJobs.delete(jobId);
+    }
+  },
+  {
+    connection: redisConnection,
+    lockDuration: workerLockDuration,
+    stalledInterval: workerStalledCheckInterval
+  }
+);
 
 // Handle graceful shutdown
-process.on("SIGINT", () => {
-  _logger.info("Received SIGINT signal");
+process.on('SIGTERM', async () => {
+  _logger.info('Received SIGTERM signal');
   isShuttingDown = true;
+  await worker.close();
+  process.exit(0);
 });
 
-process.on("SIGTERM", () => {
-  _logger.info("Received SIGTERM signal");
+process.on('SIGINT', async () => {
+  _logger.info('Received SIGINT signal');
   isShuttingDown = true;
+  await worker.close();
+  process.exit(0);
 });
 
-const processSummarizationJobInternal = async (token: string, job: Job) => {
-  if (!job.id) {
-    throw new Error("Job has no ID");
-  }
-
-  const logger = _logger.child({
-    module: "summarization-worker",
-    method: "processSummarizationJobInternal",
-    jobId: job.id,
-    teamId: job.data?.teamId ?? undefined,
+// Health check interval
+setInterval(() => {
+  _logger.info('Summarization worker health check', {
+    runningJobs: Array.from(runningJobs),
+    isShuttingDown
   });
+}, 30000);
 
-  const extendLockInterval = setInterval(async () => {
-    logger.info(`🔄 Worker extending lock on job ${job.id}`);
-    await job.extendLock(token, jobLockExtensionTime);
-  }, jobLockExtendInterval);
-
-  try {
-    // Extract content first
-    const contentExtractor = new ContentExtractor(logger);
-    const contentType = job.data.contentType || 'html';
-    
-    logger.info('Starting content extraction', {
-      contentType,
-      url: job.data.pageUrl,
-      textLength: job.data.originalText.length
-    });
-
-    const extractedContent = await contentExtractor.extractContent(
-      job.data.originalText,
-      job.data.pageUrl,
-      {
-        removeBoilerplate: true,
-        includeImages: false,
-        maxLength: job.data.maxLength,
-        customIncludeTags: job.data.includeTags,
-        customExcludeTags: job.data.excludeTags,
-        contentType,
-        convertToMarkdown: contentType === 'html',
-        normalizeWhitespace: true,
-        removeEmptyLines: true
-      }
-    );
-
-    logger.info('Content extraction completed', {
-      extractedLength: extractedContent.length
-    });
-
-    // Generate summary using the appropriate service
-    const summarizationService = new SummarizationService();
-    
-    logger.info('Starting summary generation', {
-      summaryType: job.data.summaryType,
-      maxLength: job.data.maxLength
-    });
-
-    const summary = await summarizationService.generateSummary(extractedContent, {
-      type: job.data.summaryType as SummaryType,
-      maxLength: job.data.maxLength || 150,
-      minLength: 50,
-      temperature: 0.3
-    });
-
-    logger.info('Summary generation completed', {
-      hasExtractive: !!summary.extractive_summary,
-      hasAbstractive: !!summary.abstractive_summary
-    });
-
-    // Store the summary in the database
-    const storedSummary = await summaryRepository.storeSummary({
-      project_id: job.data.projectId,
-      page_url: job.data.pageUrl,
-      original_text: job.data.originalText,
-      extractive_summary: summary.extractive_summary || null,
-      abstractive_summary: summary.abstractive_summary || null,
-      summary_type: job.data.summaryType,
-      metadata: {
-        contentType,
-        processedAt: new Date().toISOString(),
-        jobId: job.id,
-        teamId: job.data.teamId,
-        plan: job.data.plan
-      }
-    });
-
-    logger.info('Summary stored in database', {
-      summaryId: storedSummary.id,
-      pageUrl: storedSummary.page_url
-    });
-
-    return {
-      success: true,
-      summary: storedSummary
-    };
-
-  } catch (error) {
-    logger.error('Error processing summarization job', { error });
-    throw error;
-  } finally {
-    clearInterval(extendLockInterval);
-  }
-};
-
-export const processSummarizationJob = async (token: string, job: Job) => {
-  return await Sentry.startSpan(
-    {
-      name: "Process summarization job",
-      op: "queue.process",
-      attributes: {
-        "messaging.message.id": job.id,
-        "messaging.operation": "process",
-        "messaging.message.body.size": job.data?.sentry?.size,
-      },
-    },
-    async (span) => {
-      return await processSummarizationJobInternal(token, job);
-    }
-  );
-};
-
-const workerFun = async (queue: Queue | InMemoryQueue) => {
-  const logger = _logger.child({ module: "summarization-worker", method: "workerFun" });
-  logger.info('Initializing summarization worker', { queueType: queue instanceof Queue ? 'BullMQ' : 'InMemory' });
-
-  if (queue instanceof Queue) {
-    // BullMQ queue handling
-    const worker = new Worker(queue.name, async (job) => {
-      const token = uuidv4();
-      logger.debug('Processing BullMQ job', { jobId: job.id, token });
-      return await processSummarizationJob(token, job);
-    }, {
-      connection: redisConnection,
-      lockDuration: workerLockDuration,
-      stalledInterval: workerStalledCheckInterval,
-      maxStalledCount: 10,
-    });
-
-    worker.on('completed', (job) => {
-      logger.info('BullMQ job completed successfully', { jobId: job.id });
-      if (job.id) {
-        runningJobs.delete(job.id);
-      }
-    });
-
-    worker.on('failed', (job, error) => {
-      logger.error('BullMQ job failed', { jobId: job?.id, error });
-      if (job?.id) {
-        runningJobs.delete(job.id);
-      }
-    });
-
-    worker.on('error', (error) => {
-      logger.error('BullMQ worker error', { error });
-    });
-
-    process.on('SIGTERM', async () => {
-      await worker.close();
-    });
-
-    process.on('SIGINT', async () => {
-      await worker.close();
-    });
-  } else {
-    // In-memory queue handling
-    queue.on('process', async (job) => {
-      try {
-        const token = uuidv4();
-        logger.debug('Processing in-memory job', { jobId: job.id, token });
-        await processSummarizationJob(token, job);
-        logger.info('In-memory job completed successfully', { jobId: job.id });
-      } catch (error) {
-        logger.error('Error processing in-memory job', { error, jobId: job.id });
-        throw error;
-      }
-    });
-
-    queue.on('error', (error) => {
-      logger.error('In-memory queue error', { error });
-    });
-  }
-};
-
-// Start the worker
-(async () => {
-  await workerFun(getSummarizationQueue());
-})(); 
+_logger.info('Starting summarization worker'); 

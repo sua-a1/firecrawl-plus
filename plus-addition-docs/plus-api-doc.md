@@ -180,7 +180,7 @@ curl -X GET "http://localhost:3002/v1/links/broken/123?sort_by=last_checked&sort
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 2. Explicit JSON Format:
-```
+```bash
 curl -X GET "http://localhost:3002/v1/links/broken/1?format=json" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
@@ -326,6 +326,7 @@ export TEST_PROJECT_ID=1
 
 # Run the test script
 npx ts-node src/scripts/test-link-reports.ts
+npx ts-node src/scripts/test-crawler-link-management.ts
 ```
 
 # Crawling API Documentation
@@ -410,6 +411,7 @@ curl -X POST "http://localhost:3002/v1/crawl" \
     "scrapeOptions": {
       "formats": ["markdown", "html"]
     },
+    "projectId":1,
     "summarization": {
       "enabled": true,
       "type": "both",
@@ -521,7 +523,7 @@ export API_KEY=your_test_key
 export TEST_PROJECT_ID=1
 
 # Run the test script
-npx ts-node src/scripts/test-crawler.ts
+npx ts-node src/scripts/test-crawler-link-management.ts
 ```
 
 # Content Summarization API Documentation

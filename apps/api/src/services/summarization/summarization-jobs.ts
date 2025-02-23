@@ -11,6 +11,7 @@ export interface SummarizationJobData {
   summaryType: 'extractive' | 'abstractive' | 'both';
   maxLength?: number;
   subId?: string;
+  projectId: number;
 }
 
 export interface SummarizationJobOptions {

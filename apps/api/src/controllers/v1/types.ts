@@ -446,6 +446,7 @@ const crawlerOptions = z
     ignoreSitemap: z.boolean().default(false),
     deduplicateSimilarURLs: z.boolean().default(true),
     ignoreQueryParameters: z.boolean().default(false),
+    projectId: z.number().optional(),
     // Add summarization options
     summarization: z.object({
       enabled: z.boolean().default(false),
@@ -469,24 +470,15 @@ const crawlerOptions = z
     validateLinks: z.boolean().default(false),
     linkValidation: z.object({
       maxRetries: z.number().optional(),
-      batchSize: z.number().optional(),
-      rateLimit: z.object({
-        maxRequestsPerMinute: z.number().optional(),
-        delayBetweenBatches: z.number().optional(),
-        requestsPerBatch: z.number().optional()
-      }).optional(),
-      alternativeUrlOptions: z.object({
-        maxResults: z.number().optional(),
-        minSimilarityScore: z.number().optional(),
-        useWaybackMachine: z.boolean().optional(),
-        useSimilarityMatching: z.boolean().optional(),
-        useAIMatching: z.boolean().optional(),
-        contextWeights: z.object({
-          url: z.number().optional(),
-          title: z.number().optional(),
-          description: z.number().optional()
-        }).optional()
-      }).optional()
+      retryDelay: z.number().optional(),
+      timeout: z.number().optional(),
+      validateExternalLinks: z.boolean().optional(),
+      validateSubdomains: z.boolean().optional(),
+      validateImages: z.boolean().optional(),
+      validateScripts: z.boolean().optional(),
+      validateStyles: z.boolean().optional(),
+      validateFonts: z.boolean().optional(),
+      validateMedia: z.boolean().optional()
     }).optional().default({})
   })
   .strict(strictMessage);
@@ -506,10 +498,28 @@ export type CrawlerOptions = z.infer<typeof crawlerOptions>;
 export const crawlRequestSchema = crawlerOptions
   .extend({
     url,
+    projectId: z.number(),
     origin: z.string().optional().default("api"),
     scrapeOptions: scrapeOptions.default({}),
     webhook: webhookSchema.optional(),
     limit: z.number().default(10000),
+    summarization: z.object({
+      enabled: z.boolean().default(false),
+      type: z.enum(['extractive', 'abstractive', 'both']).default('extractive'),
+      maxLength: z.number().optional(),
+      minLength: z.number().optional(),
+      extractiveSummarizer: z.enum(['transformers', 'textrank', 'lexrank']).optional(),
+      fallbackStrategy: z.enum(['textrank', 'lexrank']).optional(),
+      temperature: z.number().optional(),
+      modelName: z.string().optional(),
+      earlyStop: z.boolean().optional(),
+      noRepeatNgramSize: z.number().optional(),
+      numBeams: z.number().optional(),
+      useFallbackModel: z.boolean().optional()
+    }).optional().default({
+      enabled: false,
+      type: 'extractive'
+    })
   })
   .strict(strictMessage)
   .refine((x) => extractRefine(x.scrapeOptions), extractRefineOpts)
@@ -835,7 +845,9 @@ export function toLegacyCrawlerOptions(x: CrawlerOptions) {
     summarization: x.summarization,
     // Add link validation options
     validateLinks: x.validateLinks,
-    linkValidation: x.linkValidation
+    linkValidation: x.linkValidation,
+    // Add projectId
+    projectId: x.projectId
   };
 }
 

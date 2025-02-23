@@ -45,6 +45,21 @@ export async function crawlController(
     ...req.body,
     url: undefined,
     scrapeOptions: undefined,
+    projectId: req.body.projectId,
+    summarization: {
+      enabled: req.body.summarization?.enabled ?? false,
+      type: req.body.summarization?.type ?? 'extractive',
+      maxLength: req.body.summarization?.maxLength,
+      minLength: req.body.summarization?.minLength,
+      extractiveSummarizer: req.body.summarization?.extractiveSummarizer,
+      fallbackStrategy: req.body.summarization?.fallbackStrategy,
+      temperature: req.body.summarization?.temperature,
+      modelName: req.body.summarization?.modelName,
+      earlyStop: req.body.summarization?.earlyStop,
+      noRepeatNgramSize: req.body.summarization?.noRepeatNgramSize,
+      numBeams: req.body.summarization?.numBeams,
+      useFallbackModel: req.body.summarization?.useFallbackModel
+    }
   };
   const scrapeOptions = req.body.scrapeOptions;
 
@@ -99,20 +114,23 @@ export async function crawlController(
 
   await saveCrawl(id, sc);
 
+  const jobData = {
+    url: req.body.url,
+    mode: "kickoff" as const,
+    team_id: req.auth.team_id,
+    plan: req.auth.plan,
+    crawlerOptions,
+    scrapeOptions: sc.scrapeOptions,
+    internalOptions: sc.internalOptions,
+    origin: "api",
+    crawl_id: id,
+    webhook: req.body.webhook,
+    v1: true,
+    project_id: req.body.projectId
+  };
+
   await _addScrapeJobToBullMQ(
-    {
-      url: req.body.url,
-      mode: "kickoff" as const,
-      team_id: req.auth.team_id,
-      plan: req.auth.plan,
-      crawlerOptions,
-      scrapeOptions: sc.scrapeOptions,
-      internalOptions: sc.internalOptions,
-      origin: "api",
-      crawl_id: id,
-      webhook: req.body.webhook,
-      v1: true,
-    },
+    jobData,
     {},
     crypto.randomUUID(),
     10,

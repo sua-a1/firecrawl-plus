@@ -1,4 +1,4 @@
-import { logger } from "../../lib/logger";
+import { logger as defaultLogger } from "../../lib/logger";
 import { transformHtml } from "../../lib/html-transformer";
 import { load } from "cheerio";
 import { parseMarkdown } from "../../lib/html-to-markdown";
@@ -54,7 +54,11 @@ export interface ContentExtractionOptions {
 }
 
 export class ContentExtractor {
-  constructor(private readonly logger = logger.child({ module: 'ContentExtractor' })) {}
+  private readonly logger: typeof defaultLogger;
+
+  constructor(logger = defaultLogger.child({ module: 'ContentExtractor' })) {
+    this.logger = logger;
+  }
 
   /**
    * Extract main content from various content types

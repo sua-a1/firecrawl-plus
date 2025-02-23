@@ -13,14 +13,14 @@ import {
   getIndexQueue,
   getGenerateLlmsTxtQueue,
   getSummarizationQueue,
+  summarizationQueueName,
+  InMemoryQueue,
 } from "./queue-service";
 import { startWebScraperPipeline } from "../main/runWebScraper";
 import { callWebhook } from "./webhook";
 import { logJob } from "./logging/log_job";
-import { Job, Queue } from "bullmq";
+import { Job, Queue, Worker } from "bullmq";
 import { logger as _logger } from "../lib/logger";
-import { Worker } from "bullmq";
-import systemMonitor from "./system-monitor";
 import { v4 as uuidv4 } from "uuid";
 import {
   addCrawlJob,
@@ -73,9 +73,19 @@ import { performDeepResearch } from "../lib/deep-research/deep-research-service"
 import { performGenerateLlmsTxt } from "../lib/generate-llmstxt/generate-llmstxt-service";
 import { updateGeneratedLlmsTxt } from "../lib/generate-llmstxt/generate-llmstxt-redis";
 import { LinkManagementService } from "./link-management/link-management.service";
-import { InMemoryQueue } from "./queue-service";
+import { ContentExtractor, ContentExtractionOptions } from "./summarization/content-extractor";
+import { SummarizationService } from "./summarization/summarization-service";
+import { SummaryRepository } from "./summarization/summary-repository";
+import { createClient } from '@supabase/supabase-js';
+import { Database } from '../supabase_types';
 
 configDotenv();
+
+// Initialize Supabase client
+const supabase = createClient<Database>(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_TOKEN!
+);
 
 class RacedRedirectError extends Error {
   constructor() {
@@ -573,15 +583,75 @@ const processSummarizationJobInternal = async (token: string, job: Job & { id: s
   }, jobLockExtendInterval);
 
   try {
-    // TODO: Implement actual summarization logic here
-    // This will be implemented in a separate PR
-    const result = {
-      success: true,
-      summary: "Placeholder summary - actual implementation coming soon",
-    };
+    const { pageUrl, summaryType, originalText, maxLength, projectId, teamId } = job.data;
 
-    await job.moveToCompleted(result, token, false);
-    return result;
+    // Extract content if not provided
+    let textToSummarize = originalText;
+    if (!textToSummarize) {
+      logger.info('No original text provided, extracting content', { pageUrl });
+      const contentExtractor = new ContentExtractor();
+      const extractionOptions: ContentExtractionOptions = {
+        contentType: 'html',
+        convertToMarkdown: true,
+        removeBoilerplate: true
+      };
+      
+      // First fetch the content from the URL
+      const response = await fetch(pageUrl);
+      const htmlContent = await response.text();
+      
+      textToSummarize = await contentExtractor.extractContent(htmlContent, pageUrl, extractionOptions);
+    }
+
+    // Generate summary using the appropriate service
+    logger.info('Generating summary', { 
+      summaryType,
+      contentLength: textToSummarize.length,
+      maxLength
+    });
+
+    const summarizationService = new SummarizationService();
+    const summary = await summarizationService.generateSummary(textToSummarize, {
+      type: summaryType,
+      maxLength: maxLength || 150,
+      minLength: 50,
+      temperature: 0.3
+    });
+
+    // Store the summary in the database
+    const summaryRepository = new SummaryRepository(supabase);
+    const storedSummary = await summaryRepository.storeSummary({
+      project_id: projectId,
+      page_url: pageUrl,
+      original_text: textToSummarize,
+      extractive_summary: summary.extractive_summary || null,
+      abstractive_summary: summary.abstractive_summary || null,
+      summary_type: summaryType,
+      metadata: {
+        processedAt: new Date().toISOString(),
+        jobId: job.id,
+        teamId: teamId,
+        plan: job.data.plan
+      }
+    });
+
+    logger.info('Summary stored in database', {
+      summaryId: storedSummary.id,
+      pageUrl: storedSummary.page_url,
+      summaryType,
+      hasExtractive: !!summary.extractive_summary,
+      hasAbstractive: !!summary.abstractive_summary
+    });
+
+    await job.moveToCompleted({
+      success: true,
+      summary: storedSummary
+    }, token, false);
+
+    return {
+      success: true,
+      summary: storedSummary
+    };
   } catch (error) {
     logger.error("Error processing summarization job", { error });
     Sentry.captureException(error);
@@ -699,6 +769,7 @@ async function processKickoffJob(job: Job & { id: string }, token: string) {
         webhook: job.data.webhook,
         v1: job.data.v1,
         isCrawlSourceScrape: true,
+        project_id: job.data.project_id
       },
       {
         priority: 15,
@@ -755,6 +826,7 @@ async function processKickoffJob(job: Job & { id: string }, token: string) {
                 sitemapped: true,
                 webhook: job.data.webhook,
                 v1: job.data.v1,
+                project_id: job.data.project_id
               },
               opts: {
                 jobId: uuid,
@@ -896,6 +968,13 @@ async function processJob(job: Job & { id: string }, token: string) {
 
     if (!job.data.scrapeOptions.formats.includes("rawHtml")) {
       delete doc.rawHtml;
+    }
+
+    // Process page for summarization if this is a crawl
+    if (job.data.crawl_id) {
+      const sc = (await getCrawl(job.data.crawl_id)) as StoredCrawl;
+      const crawler = crawlToCrawler(job.data.crawl_id, sc);
+      await crawler.processPage(doc.metadata.url ?? job.data.url, doc.markdown ?? '');
     }
 
     const data = {
@@ -1063,6 +1142,7 @@ async function processJob(job: Job & { id: string }, token: string) {
                   crawl_id: job.data.crawl_id,
                   webhook: job.data.webhook,
                   v1: job.data.v1,
+                  project_id: job.data.project_id
                 },
                 {},
                 jobId,
@@ -1209,34 +1289,83 @@ async function processJob(job: Job & { id: string }, token: string) {
   }
 }
 
-// wsq.process(
-//   Math.floor(Number(process.env.NUM_WORKERS_PER_QUEUE ?? 8)),
-//   processJob
-// );
+// Initialize all workers
+async function initializeWorkers() {
+  const logger = _logger.child({ module: "queue-worker", method: "initializeWorkers" });
+  logger.info("Initializing all workers...");
 
-// wsq.on("waiting", j => ScrapeEvents.logJobEvent(j, "waiting"));
-// wsq.on("active", j => ScrapeEvents.logJobEvent(j, "active"));
-// wsq.on("completed", j => ScrapeEvents.logJobEvent(j, "completed"));
-// wsq.on("paused", j => ScrapeEvents.logJobEvent(j, "paused"));
-// wsq.on("resumed", j => ScrapeEvents.logJobEvent(j, "resumed"));
-// wsq.on("removed", j => ScrapeEvents.logJobEvent(j, "removed"));
+  try {
+    // Initialize scrape queue worker
+    const scrapeQueue = getScrapeQueue();
+    await workerFun(scrapeQueue, async (token: string, job: Job) => {
+      if (job.data.mode === "kickoff") {
+        return await processKickoffJob(job as Job & { id: string }, token);
+      } else {
+        return await processJob(job as Job & { id: string }, token);
+      }
+    });
+    logger.info("Scrape worker initialized");
+
+    // Initialize extract queue worker
+    const extractQueue = getExtractQueue();
+    await workerFun(extractQueue, async (token: string, job: Job) => {
+      return await processExtractJobInternal(token, job as Job & { id: string });
+    });
+    logger.info("Extract worker initialized");
+
+    // Initialize deep research queue worker
+    const deepResearchQueue = getDeepResearchQueue();
+    await workerFun(deepResearchQueue, async (token: string, job: Job) => {
+      return await processDeepResearchJobInternal(token, job as Job & { id: string });
+    });
+    logger.info("Deep research worker initialized");
+
+    // Initialize LLMs text generation queue worker
+    const generateLlmsTxtQueue = getGenerateLlmsTxtQueue();
+    await workerFun(generateLlmsTxtQueue, async (token: string, job: Job) => {
+      return await processGenerateLlmsTxtJobInternal(token, job as Job & { id: string });
+    });
+    logger.info("LLMs text generation worker initialized");
+
+    // Initialize summarization queue worker
+    const summarizationQueue = getSummarizationQueue();
+    await workerFun(summarizationQueue, async (token: string, job: Job) => {
+      return await processSummarizationJobInternal(token, job as Job & { id: string });
+    });
+    logger.info("Summarization worker initialized");
+
+    // Add health check interval
+    setInterval(() => {
+      logger.info("Workers health check", {
+        scrapeQueueSize: scrapeQueue instanceof Queue ? scrapeQueue.getJobCounts() : 0,
+        extractQueueSize: extractQueue instanceof Queue ? extractQueue.getJobCounts() : 0,
+        deepResearchQueueSize: deepResearchQueue instanceof Queue ? deepResearchQueue.getJobCounts() : 0,
+        llmsQueueSize: generateLlmsTxtQueue instanceof Queue ? generateLlmsTxtQueue.getJobCounts() : 0,
+        summarizationQueueSize: summarizationQueue instanceof Queue ? summarizationQueue.getJobCounts() : 0
+      });
+    }, 30000);
+
+  } catch (error) {
+    logger.error("Failed to initialize workers", { error });
+    throw error;
+  }
+}
 
 // Start all workers
-(async () => {
-  await Promise.all([
-    workerFun(getScrapeQueue(), processJobInternal),
-    workerFun(getExtractQueue(), processExtractJobInternal),
-    workerFun(getDeepResearchQueue(), processDeepResearchJobInternal),
-    workerFun(getGenerateLlmsTxtQueue(), processGenerateLlmsTxtJobInternal),
-    workerFun(getSummarizationQueue(), processSummarizationJobInternal),
-  ]);
+if (require.main === module) {
+  initializeWorkers().catch((error) => {
+    _logger.error("Failed to start workers", { error });
+    process.exit(1);
+  });
 
-  console.log("All workers exited. Waiting for all jobs to finish...");
+  // Keep the process running
+  process.on("SIGTERM", () => {
+    _logger.info("SIGTERM signal received. Shutting down gracefully...");
+    process.exit(0);
+  });
 
-  while (runningJobs.size > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  console.log("All jobs finished. Worker out!");
-  process.exit(0);
-})();
+  process.on("SIGINT", () => {
+    _logger.info("SIGINT signal received. Shutting down gracefully...");
+    process.exit(0);
+  });
+}

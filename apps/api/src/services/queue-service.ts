@@ -46,13 +46,13 @@ redisConnection.on('reconnecting', () => {
   logger.info('Redis client reconnecting');
 });
 
-export const scrapeQueueName = "{scrapeQueue}";
-export const extractQueueName = "{extractQueue}";
-export const loggingQueueName = "{loggingQueue}";
-export const indexQueueName = "{indexQueue}";
-export const generateLlmsTxtQueueName = "{generateLlmsTxtQueue}";
-export const deepResearchQueueName = "{deepResearchQueue}";
-export const summarizationQueueName = "{summarizationQueue}";
+export const scrapeQueueName = "scrapeQueue";
+export const extractQueueName = "extractQueue";
+export const loggingQueueName = "loggingQueue";
+export const indexQueueName = "indexQueue";
+export const generateLlmsTxtQueueName = "generateLlmsTxtQueue";
+export const deepResearchQueueName = "deepResearchQueue";
+export const summarizationQueueName = "summarizationQueue";
 
 export function getScrapeQueue() {
   if (!scrapeQueue) {
@@ -146,9 +146,20 @@ export function getDeepResearchQueue() {
 
 export function getSummarizationQueue() {
   if (!summarizationQueue) {
-    // Use in-memory queue for summarization
-    summarizationQueue = new InMemoryQueue(summarizationQueueName);
-    logger.info("In-memory summarization queue created");
+    // Use BullMQ for summarization
+    summarizationQueue = new Queue(summarizationQueueName, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        removeOnComplete: {
+          age: 3600, // Keep completed jobs for 1 hour
+          count: 1000,
+        },
+        removeOnFail: {
+          age: 3600,
+        },
+      },
+    });
+    logger.info("BullMQ summarization queue created");
   }
   return summarizationQueue;
 }
@@ -167,6 +178,15 @@ export class InMemoryQueue extends EventEmitter {
     this.name = name;
     this.jobs = new Map();
     this.isProcessing = false;
+    _logger.info(`Created InMemoryQueue: ${name}`, {
+      queueType: 'InMemory',
+      listenerCount: this.listenerCount('process')
+    });
+  }
+
+  // Add method to get queue size
+  getQueueSize(): number {
+    return this.jobs.size;
   }
 
   async add(name: string, data: any): Promise<{ id: string }> {
@@ -174,33 +194,114 @@ export class InMemoryQueue extends EventEmitter {
     const job = { id: jobId, name, data };
     this.jobs.set(jobId, job);
     
-    // Log job addition
-    _logger.debug('Added job to in-memory queue', { jobId, name });
+    _logger.info('Added job to in-memory queue', { 
+      jobId, 
+      name,
+      queueName: this.name,
+      queueSize: this.getQueueSize(),
+      listenerCount: this.listenerCount('process'),
+      jobData: {
+        pageUrl: data.pageUrl,
+        summaryType: data.summaryType,
+        projectId: data.projectId,
+        teamId: data.teamId,
+        contentLength: data.originalText?.length
+      }
+    });
     
     this.emit('active', job);
-    this.processNext();
+    
+    // Log if there are no process listeners
+    if (this.listenerCount('process') === 0) {
+      _logger.warn('No process listeners attached to queue', {
+        queueName: this.name,
+        queueSize: this.getQueueSize()
+      });
+    }
+    
+    setImmediate(() => this.processNext());
     return job;
   }
 
   private async processNext() {
-    if (this.isProcessing || this.jobs.size === 0) return;
+    if (this.isProcessing || this.jobs.size === 0) {
+      _logger.debug('Skipping processNext', {
+        isProcessing: this.isProcessing,
+        queueSize: this.jobs.size,
+        queueName: this.name,
+        hasProcessListeners: this.listenerCount('process') > 0
+      });
+      return;
+    }
     
     this.isProcessing = true;
     const [jobId, job] = this.jobs.entries().next().value;
     
     try {
-      // Log processing start
-      _logger.debug('Processing job from in-memory queue', { jobId });
+      _logger.info('Processing job from in-memory queue', { 
+        jobId,
+        queueName: this.name,
+        queueSize: this.getQueueSize(),
+        listenerCount: this.listenerCount('process'),
+        jobData: {
+          pageUrl: job.data.pageUrl,
+          summaryType: job.data.summaryType,
+          projectId: job.data.projectId,
+          teamId: job.data.teamId,
+          contentLength: job.data.originalText?.length
+        }
+      });
       
-      this.emit('process', job);
+      // Get all listeners for the 'process' event
+      const processListeners = this.listeners('process');
+      
+      // Only call the first process listener if any exist
+      let result;
+      if (processListeners.length > 0) {
+        _logger.info('Calling process listener', {
+          queueName: this.name,
+          jobId,
+          listenerCount: processListeners.length
+        });
+        result = await processListeners[0](job);
+      } else {
+        _logger.error('No process listeners found for queue', {
+          queueName: this.name,
+          jobId,
+          queueSize: this.getQueueSize()
+        });
+      }
+      
       this.jobs.delete(jobId);
-      this.emit('completed', job);
+      
+      // Emit completion event with result
+      this.emit('completed', job, result);
+      _logger.info('Job completed successfully', { 
+        jobId, 
+        queueName: this.name,
+        queueSize: this.getQueueSize(),
+        success: result?.success,
+        summaryId: result?.summary?.id
+      });
     } catch (error) {
-      _logger.error('Failed to process job in memory queue', { error, jobId });
+      _logger.error('Failed to process job in memory queue', { 
+        error, 
+        jobId,
+        queueName: this.name,
+        queueSize: this.getQueueSize(),
+        jobData: {
+          pageUrl: job.data.pageUrl,
+          summaryType: job.data.summaryType,
+          projectId: job.data.projectId
+        }
+      });
       this.emit('failed', job, error);
     } finally {
       this.isProcessing = false;
-      this.processNext();
+      if (this.jobs.size > 0) {
+        // Process next job if any remain
+        setImmediate(() => this.processNext());
+      }
     }
   }
 }

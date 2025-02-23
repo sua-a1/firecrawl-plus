@@ -12,8 +12,8 @@ import { extractLinks } from "../../lib/html-transformer";
 import { TimeoutSignal, URLTrace } from "../../controllers/v1/types";
 import { LinkManagementService } from "../../services/link-management/link-management.service";
 import { supabase_service } from "../../services/supabase";
-import { SummarizationService } from '../../services/summarization/summarization-service';
-import { SummaryRepository } from '../../services/summarization/summary-repository';
+import { addSummarizationJob } from '../../services/summarization/summarization-jobs';
+import crypto from "crypto";
 
 export class WebCrawler {
   private jobId: string;
@@ -40,8 +40,6 @@ export class WebCrawler {
   private validateLinks: boolean = false;
   private linkManagementService?: LinkManagementService;
   private summarizationEnabled: boolean = false;
-  private summarizationService?: SummarizationService;
-  private summaryRepository?: SummaryRepository;
   private summarizationOptions?: {
     type: 'extractive' | 'abstractive' | 'both';
     maxLength?: number;
@@ -125,9 +123,7 @@ export class WebCrawler {
     this.validateLinks = validateLinks;
     this.summarizationEnabled = summarization.enabled;
 
-    if (this.summarizationEnabled && projectId) {
-      this.summarizationService = new SummarizationService();
-      this.summaryRepository = new SummaryRepository(supabase_service);
+    if (this.summarizationEnabled) {
       this.summarizationOptions = summarization;
       this.logger.info('Summarization enabled for crawler', {
         type: summarization.type,
@@ -920,54 +916,131 @@ export class WebCrawler {
     return sitemapCount;
   }
 
+  public async processPage(url: string, content: string): Promise<void> {
+    this.logger.debug('Processing page for summarization', {
+      url,
+      contentLength: content.length,
+      summarizationEnabled: this.summarizationEnabled,
+      projectId: this.projectId,
+      summarizationOptions: this.summarizationOptions
+    });
+
+    if (this.summarizationEnabled) {
+      try {
+        const jobId = crypto.randomUUID();
+        this.logger.info('Attempting to generate and store summary', {
+          url,
+          jobId,
+          projectId: this.projectId,
+          summaryType: this.summarizationOptions?.type
+        });
+
+        await this.generateAndStoreSummary(url, content);
+      } catch (error) {
+        this.logger.error('Failed to generate and store summary', {
+          url,
+          projectId: this.projectId,
+          error: error.message,
+          stack: error.stack
+        });
+      }
+    } else {
+      this.logger.debug('Summarization not enabled for this page', {
+        url,
+        projectId: this.projectId
+      });
+    }
+  }
+
   private async generateAndStoreSummary(url: string, content: string): Promise<void> {
-    if (!this.summarizationEnabled || !this.summarizationService || !this.summaryRepository || !this.projectId || !this.summarizationOptions) {
+    // Debug logging for initial state
+    this.logger.debug('generateAndStoreSummary called', {
+      url,
+      contentLength: content.length,
+      summarizationEnabled: this.summarizationEnabled,
+      projectId: this.projectId,
+      summaryType: this.summarizationOptions?.type,
+      hasContent: !!content
+    });
+
+    if (!this.summarizationEnabled || !this.projectId || !this.summarizationOptions) {
+      this.logger.debug('Summarization not enabled, projectId not set, or options missing', { 
+        url,
+        enabled: this.summarizationEnabled,
+        projectId: this.projectId,
+        hasOptions: !!this.summarizationOptions,
+        contentLength: content.length
+      });
       return;
     }
 
     try {
-      this.logger.debug('Generating summary for URL', { url });
+      this.logger.info('Starting summarization job creation', { 
+        url,
+        projectId: this.projectId,
+        contentLength: content.length,
+        summaryType: this.summarizationOptions.type
+      });
       
-      const summary = await this.summarizationService.generateSummary(content, {
-        type: this.summarizationOptions.type,
+      // Generate a unique job ID that includes both crawl ID and URL hash
+      const urlHash = crypto.createHash('md5').update(url).digest('hex').slice(0, 8);
+      const uniqueId = crypto.randomUUID();
+      const jobId = `${this.jobId}_${urlHash}_${uniqueId}`;
+      
+      // Check if we've already processed this URL in this crawl
+      const cacheKey = `summarization:${this.jobId}:${urlHash}`;
+      const hasProcessed = await redisConnection.get(cacheKey);
+      
+      if (hasProcessed) {
+        this.logger.info('URL already processed in this crawl, skipping', {
+          url,
+          urlHash,
+          jobId: this.jobId
+        });
+        return;
+      }
+      
+      // Log the job data before queueing
+      this.logger.debug('Preparing to queue summarization job', {
+        jobId,
+        teamId: this.projectId.toString(),
+        pageUrl: url,
+        contentLength: content.length,
+        summaryType: this.summarizationOptions.type,
+        maxLength: this.summarizationOptions.maxLength
+      });
+
+      await addSummarizationJob({
+        teamId: this.projectId.toString(),
+        plan: 'default',
+        pageUrl: url,
+        originalText: content,
+        summaryType: this.summarizationOptions.type,
         maxLength: this.summarizationOptions.maxLength,
-        minLength: this.summarizationOptions.minLength,
-        extractiveSummarizer: this.summarizationOptions.extractiveSummarizer,
-        fallbackStrategy: this.summarizationOptions.fallbackStrategy,
-        temperature: this.summarizationOptions.temperature,
-        modelName: this.summarizationOptions.modelName,
-        earlyStop: this.summarizationOptions.earlyStop,
-        noRepeatNgramSize: this.summarizationOptions.noRepeatNgramSize,
-        numBeams: this.summarizationOptions.numBeams,
-        useFallbackModel: this.summarizationOptions.useFallbackModel
+        projectId: this.projectId
+      }, {
+        priority: 10,
+        jobId
       });
 
-      await this.summaryRepository.storeSummary({
-        project_id: this.projectId,
-        page_url: url,
-        original_text: content,
-        extractive_summary: summary.extractive_summary || null,
-        abstractive_summary: summary.abstractive_summary || null,
-        summary_type: this.summarizationOptions.type,
-        metadata: {
-          processedAt: new Date().toISOString(),
-          crawlJobId: this.jobId
-        }
-      });
+      // Mark this URL as processed for this crawl
+      await redisConnection.set(cacheKey, '1', 'EX', 3600); // Expire after 1 hour
 
-      this.logger.debug('Summary stored successfully', { url });
+      this.logger.info('Summarization job queued successfully', { 
+        url,
+        jobId,
+        projectId: this.projectId,
+        summaryType: this.summarizationOptions.type
+      });
     } catch (error) {
-      this.logger.error('Error generating or storing summary', { error, url });
-      // Don't throw - we want to continue crawling even if summarization fails
-    }
-  }
-
-  public async processPage(url: string, content: string): Promise<void> {
-    // ... existing processing code ...
-
-    // Generate and store summary if enabled
-    if (this.summarizationEnabled) {
-      await this.generateAndStoreSummary(url, content);
+      this.logger.error('Error queueing summarization job', { 
+        error, 
+        url,
+        projectId: this.projectId,
+        summaryType: this.summarizationOptions?.type,
+        errorMessage: error.message,
+        errorStack: error.stack
+      });
     }
   }
 }

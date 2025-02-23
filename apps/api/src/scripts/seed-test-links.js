@@ -105,6 +105,106 @@ function seedTestLinks() {
                             suggested_alternative: 'https://api.example.com/v2/current',
                             anchor_text: 'API Documentation',
                             is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/docs/tutorials',
+                            extracted_link: 'https://example.com/docs/tutorials/getting-started/old',
+                            status_code: 301,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://example.com/docs/tutorials/getting-started/new',
+                            anchor_text: 'Getting Started Guide',
+                            is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/blog/tech-news',
+                            extracted_link: 'https://example.com/blog/archived/2020/article',
+                            status_code: 410,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://example.com/blog/tech-news/latest',
+                            anchor_text: 'Read More',
+                            is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/downloads',
+                            extracted_link: 'https://cdn.example.com/files/v1/software.zip',
+                            status_code: 502,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://cdn.example.com/files/v2/software.zip',
+                            anchor_text: 'Download Software',
+                            is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/support',
+                            extracted_link: 'https://help.external-service.com/integration',
+                            status_code: 504,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: null,
+                            anchor_text: 'Integration Guide',
+                            is_internal: false
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/docs/api/v1',
+                            extracted_link: 'https://example.com/docs/api/v1/endpoints/deprecated',
+                            status_code: 404,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://example.com/docs/api/v2/endpoints',
+                            anchor_text: 'API Endpoints',
+                            is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/community',
+                            extracted_link: 'https://forum.example.com/old-category',
+                            status_code: 404,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://forum.example.com/new-category',
+                            anchor_text: 'Visit Forums',
+                            is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/pricing',
+                            extracted_link: 'https://example.com/plans/enterprise/2023',
+                            status_code: 404,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://example.com/plans/enterprise/2024',
+                            anchor_text: 'Enterprise Plans',
+                            is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/blog/tutorials',
+                            extracted_link: 'https://github.com/example/deprecated-repo',
+                            status_code: 404,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://github.com/example/new-repo',
+                            anchor_text: 'Source Code',
+                            is_internal: false
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/resources/ebooks',
+                            extracted_link: 'https://example.com/assets/pdf/old-guide.pdf',
+                            status_code: 404,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://example.com/assets/pdf/updated-guide.pdf',
+                            anchor_text: 'Download PDF Guide',
+                            is_internal: true
+                        },
+                        {
+                            project_id: 1,
+                            page_url: 'https://example.com/careers',
+                            extracted_link: 'https://jobs.example.com/positions/senior-dev-2023',
+                            status_code: 404,
+                            last_checked: new Date().toISOString(),
+                            suggested_alternative: 'https://jobs.example.com/positions/senior-dev-2024',
+                            anchor_text: 'Apply Now',
+                            is_internal: true
                         }
                     ];
                     return [4 /*yield*/, supabase
